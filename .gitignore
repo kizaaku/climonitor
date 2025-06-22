@@ -1,3 +1,9 @@
+# claude code settings
+.claude/
+
+# bin
+/bin/
+
 # Rust
 /target/
 Cargo.lock
