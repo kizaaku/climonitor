@@ -2,6 +2,7 @@ use serde::Deserialize;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use crate::unicode_utils::truncate_str;
+use crate::status_detector::StatusDetector;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionStatus {
@@ -66,8 +67,6 @@ pub enum MessageContent {
         #[allow(dead_code)]
         role: String,
         content: Vec<ContentItem>,
-        #[serde(rename = "stop_reason")]
-        stop_reason: Option<String>,
     },
 }
 
@@ -116,8 +115,8 @@ impl Session {
     pub fn update_from_message(&mut self, msg: &SessionMessage) {
         self.last_activity = msg.timestamp;
         
-        // ステータス判定
-        self.status = determine_status(msg);
+        // ステータス判定（新しいモジュールを使用）
+        self.status = StatusDetector::determine_status(msg);
         
         // 最新メッセージ更新
         if let Some(content) = extract_message_content(&msg.message) {
@@ -139,41 +138,6 @@ fn extract_project_name(path: &str) -> String {
         .to_string()
 }
 
-fn determine_status(msg: &SessionMessage) -> SessionStatus {
-    let now = Utc::now();
-    let time_diff = now.signed_duration_since(msg.timestamp);
-    
-    // 5分以上古い場合はアイドル
-    if time_diff.num_minutes() > 5 {
-        return SessionStatus::Idle;
-    }
-    
-    // エラーチェック
-    if let Some(result) = &msg.tool_use_result {
-        if result.contains("Error") || result.contains("error") {
-            return SessionStatus::Error;
-        }
-    }
-    
-    // メッセージタイプ別判定
-    match msg.message_type.as_str() {
-        "assistant" => {
-            let stop_reason = match &msg.message {
-                MessageContent::Assistant { stop_reason, .. } => stop_reason.as_deref(),
-                _ => None,
-            };
-            
-            match stop_reason {
-                Some("tool_use") => SessionStatus::Active,
-                Some("end_turn") => SessionStatus::Waiting,
-                None => SessionStatus::Active, // まだ応答中
-                _ => SessionStatus::Waiting,
-            }
-        },
-        "user" => SessionStatus::Active, // ユーザー入力後、Claude応答待ち
-        _ => SessionStatus::Waiting,
-    }
-}
 
 fn extract_message_content(message: &MessageContent) -> Option<String> {
     let content_items = match message {

@@ -4,6 +4,7 @@ use std::io::IsTerminal;
 mod app;
 mod config;
 mod session;
+mod status_detector;
 mod ui;
 mod unicode_utils;
 mod watcher;
