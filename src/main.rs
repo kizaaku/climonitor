@@ -2,6 +2,7 @@ use clap::Parser;
 use std::io::IsTerminal;
 
 mod app;
+mod config;
 mod session;
 mod ui;
 mod unicode_utils;

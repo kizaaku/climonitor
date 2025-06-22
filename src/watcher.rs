@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use std::fs;
 use crate::session::SessionMessage;
 use crate::unicode_utils::truncate_str;
+use crate::config::Config;
 
 pub struct FileWatcher {
     _watcher: notify::RecommendedWatcher,
@@ -29,17 +30,17 @@ impl FileWatcher {
             }
         })?;
 
-        let claude_dir = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?
-            .join(".claude/projects");
+        let config = Config::load()?;
+        let claude_dir = &config.claude_log_dir;
 
         if claude_dir.exists() {
             watcher.watch(&claude_dir, RecursiveMode::Recursive)?;
             
             // 初期読み込み - 既存のファイルをすべて読む
             let initial_tx = tx.clone();
+            let claude_dir_clone = claude_dir.clone();
             tokio::spawn(async move {
-                if let Err(e) = load_existing_files(&claude_dir, initial_tx).await {
+                if let Err(e) = load_existing_files(&claude_dir_clone, initial_tx).await {
                     eprintln!("Error loading existing files: {}", e);
                 }
             });
@@ -95,8 +96,12 @@ fn read_jsonl_file(path: &Path) -> anyhow::Result<Vec<SessionMessage>> {
 }
 
 fn read_jsonl_file_tail(path: &Path, lines: usize) -> anyhow::Result<Vec<SessionMessage>> {
-    // 環境変数でデバッグモードを制御
-    let debug_mode = std::env::var("CCMONITOR_DEBUG").is_ok();
+    // 設定からデバッグモードを取得
+    let config = Config::load().unwrap_or_else(|_| Config { 
+        claude_log_dir: std::path::PathBuf::new(), 
+        debug_mode: false 
+    });
+    let debug_mode = config.debug_mode;
     let content = fs::read_to_string(path)?;
     let mut messages = Vec::new();
     
