@@ -4,10 +4,10 @@ use chrono::Utc;
 /// セッション状態を判定するモジュール
 /// 
 /// このモジュールはClaudeセッションメッセージから現在の状態を判定する
-/// 新しい判定ルール:
-/// - tool_useメッセージから1秒経過 → Waiting (自動承認なし)
-/// - textメッセージ → Waiting (完了)
-/// - userメッセージ → Active (Claude応答待ち)
+/// 判定ルール:
+/// - tool_useメッセージから1秒経過 → Approve (承認待ち)
+/// - textメッセージ → Finish (完了)
+/// - userメッセージ → Active (作業中)
 
 pub struct StatusDetector;
 
@@ -17,9 +17,9 @@ impl StatusDetector {
     /// # 判定ルール
     /// 1. エラー検出（最優先）
     /// 2. メッセージ内容による判定:
-    ///    - tool_use: 1秒後にWaiting（自動承認待ち）、それまではActive
-    ///    - text: Waiting（完了）
-    ///    - user: Active（Claude応答待ち）
+    ///    - tool_use: 1秒後にApprove（承認待ち）、それまではActive
+    ///    - text: Finish（完了）
+    ///    - user: Active（作業中）
     /// 3. 5分以上経過: Idle
     pub fn determine_status(msg: &SessionMessage) -> SessionStatus {
         // エラーチェック（最優先）
@@ -56,13 +56,13 @@ impl StatusDetector {
                         let time_diff = now.signed_duration_since(msg.timestamp);
                         
                         if time_diff.num_seconds() >= 1 {
-                            return SessionStatus::Waiting; // 自動承認されていない
+                            return SessionStatus::Approve; // 承認待ち
                         } else {
                             return SessionStatus::Active; // ツール実行中
                         }
                     },
                     ContentItem::Text { .. } => {
-                        return SessionStatus::Waiting; // テキスト応答 = 完了
+                        return SessionStatus::Finish; // テキスト応答 = 完了
                     }
                 }
             }
@@ -82,7 +82,7 @@ impl StatusDetector {
         if time_diff.num_minutes() > 5 {
             SessionStatus::Idle
         } else {
-            SessionStatus::Waiting
+            SessionStatus::Active
         }
     }
     

@@ -72,16 +72,39 @@ async fn load_existing_files(
         
         if path.is_dir() {
             let jsonl_entries = fs::read_dir(&path)?;
-            for jsonl_entry in jsonl_entries {
-                let jsonl_entry = jsonl_entry?;
-                let jsonl_path = jsonl_entry.path();
-                
-                if jsonl_path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
-                    // 最新の数行のみ読み込み（ファイルが大きい場合の最適化）
-                    if let Ok(messages) = read_jsonl_file_tail(&jsonl_path, 10) {
-                        for msg in messages {
-                            let _ = tx.send(msg).await;
-                        }
+            
+            // ファイルを更新日時順（新しい順）でソート
+            let mut jsonl_files: Vec<_> = jsonl_entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    let path = entry.path();
+                    path.extension().and_then(|s| s.to_str()) == Some("jsonl")
+                })
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    let metadata = fs::metadata(&path).ok()?;
+                    let modified = metadata.modified().ok()?;
+                    
+                    // 直近5時間以内に更新されたファイルのみを対象とする
+                    let now = std::time::SystemTime::now();
+                    let five_hours_ago = now.checked_sub(std::time::Duration::from_secs(5 * 60 * 60))?;
+                    
+                    if modified >= five_hours_ago {
+                        Some((path, modified))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            
+            // 更新日時で降順ソート（新しいファイルから）
+            jsonl_files.sort_by(|a, b| b.1.cmp(&a.1));
+            
+            for (jsonl_path, _) in jsonl_files {
+                // 最新の1行のみ読み込み（高速化）
+                if let Ok(messages) = read_jsonl_file_tail(&jsonl_path, 1) {
+                    for msg in messages {
+                        let _ = tx.send(msg).await;
                     }
                 }
             }

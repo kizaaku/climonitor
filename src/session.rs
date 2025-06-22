@@ -6,8 +6,9 @@ use crate::status_detector::StatusDetector;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionStatus {
-    Active,    // 🟢 作業中 (tool_use)
-    Waiting,   // 🟡 入力待ち (end_turn)
+    Active,    // 🟢 作業中
+    Approve,   // 🟡 承認待ち (tool_use)
+    Finish,    // 🔵 完了 (text)
     Error,     // 🔴 エラー/中断
     Idle,      // ⚪ アイドル (5分以上無活動)
 }
@@ -16,7 +17,8 @@ impl SessionStatus {
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Active => "🟢",
-            Self::Waiting => "🟡", 
+            Self::Approve => "🟡", 
+            Self::Finish => "🔵",
             Self::Error => "🔴",
             Self::Idle => "⚪",
         }
@@ -25,7 +27,8 @@ impl SessionStatus {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Active => "作業中",
-            Self::Waiting => "入力待ち",
+            Self::Approve => "承認待ち",
+            Self::Finish => "完了",
             Self::Error => "エラー",
             Self::Idle => "アイドル",
         }
@@ -197,11 +200,17 @@ impl SessionStore {
     pub fn get_sessions_by_project(&self) -> HashMap<String, Vec<&Session>> {
         let mut projects: HashMap<String, Vec<&Session>> = HashMap::new();
         
+        // 直近5時間以内のセッションのみを対象とする
+        let five_hours_ago = Utc::now() - chrono::Duration::hours(5);
+        
         for session in self.sessions.values() {
-            projects
-                .entry(session.project_name.clone())
-                .or_insert_with(Vec::new)
-                .push(session);
+            // 直近5時間以内に活動があったセッションのみ表示
+            if session.last_activity >= five_hours_ago {
+                projects
+                    .entry(session.project_name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(session);
+            }
         }
         
         // 各プロジェクト内でも最新順にソート

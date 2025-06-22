@@ -149,7 +149,8 @@ fn draw_project_group(
 fn create_session_item(session: &Session) -> ListItem {
     let status_style = match session.status {
         SessionStatus::Active => Style::default().fg(Color::Green),
-        SessionStatus::Waiting => Style::default().fg(Color::Yellow),
+        SessionStatus::Approve => Style::default().fg(Color::Yellow),
+        SessionStatus::Finish => Style::default().fg(Color::Blue),
         SessionStatus::Error => Style::default().fg(Color::Red),
         SessionStatus::Idle => Style::default().fg(Color::Gray),
     };
