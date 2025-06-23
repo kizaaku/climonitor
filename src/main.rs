@@ -26,6 +26,14 @@ struct Cli {
     /// Non-interactive mode (print status and exit)
     #[arg(long)]
     no_tui: bool,
+    
+    /// Watch mode - continuously monitor and print status changes
+    #[arg(long)]
+    watch: bool,
+    
+    /// Demo mode - simulate tool_use messages for testing the 1-second timer
+    #[arg(long)]
+    demo: bool,
 }
 
 #[tokio::main]
@@ -34,7 +42,11 @@ async fn main() -> anyhow::Result<()> {
     
     let mut app = App::new(cli.project, cli.verbose).await?;
     
-    if cli.no_tui {
+    if cli.demo {
+        app.demo_mode().await?;
+    } else if cli.no_tui && cli.watch {
+        app.watch_mode().await?;
+    } else if cli.no_tui {
         app.print_status().await?;
     } else {
         // 環境チェック：TUIが利用可能か確認

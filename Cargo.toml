@@ -23,4 +23,7 @@ anyhow = "1.0"
 dirs = "5.0"
 unicode-width = "0.1"
 unicode-segmentation = "1.10"
-dotenv = "0.15"
+dotenvy = "0.15"
+tempfile = "3.8"
+
+[dev-dependencies]

@@ -90,11 +90,11 @@ impl App {
         for _ in 0..5 {
             tokio::select! {
                 msg = self.file_watcher.next_message() => {
-                    if let Some(session_msg) = msg {
+                    if let Some(msg_with_file) = msg {
                         if self.verbose {
-                            println!("Found session: {}", session_msg.session_id);
+                            println!("Found session: {}", msg_with_file.message.session_id);
                         }
-                        self.session_store.update_session(session_msg);
+                        self.session_store.update_session_with_file(msg_with_file.message, msg_with_file.file_path);
                     }
                 }
                 _ = sleep(Duration::from_millis(200)) => {
@@ -102,6 +102,9 @@ impl App {
                 }
             }
         }
+        
+        // 最新の状態に更新
+        self.session_store.update_status_by_time();
         
         let sessions_by_project = self.session_store.get_sessions_by_project();
         
@@ -152,11 +155,11 @@ impl App {
         for i in 0..10 {
             tokio::select! {
                 msg = self.file_watcher.next_message() => {
-                    if let Some(session_msg) = msg {
+                    if let Some(msg_with_file) = msg {
                         if self.verbose {
-                            eprintln!("Initial session loaded: {}", session_msg.session_id);
+                            eprintln!("Initial session loaded: {}", msg_with_file.message.session_id);
                         }
-                        self.session_store.update_session(session_msg);
+                        self.session_store.update_session_with_file(msg_with_file.message, msg_with_file.file_path);
                         loaded_count += 1;
                     }
                 }
@@ -169,6 +172,9 @@ impl App {
         }
 
         loop {
+            // 既存セッションの状態を時間経過に基づいて更新
+            self.session_store.update_status_by_time();
+            
             // Draw UI
             let sessions_by_project = self.session_store.get_sessions_by_project();
             
@@ -193,21 +199,183 @@ impl App {
                 
                 // Handle file watcher events
                 msg = self.file_watcher.next_message() => {
-                    if let Some(session_msg) = msg {
+                    if let Some(msg_with_file) = msg {
                         if self.verbose {
-                            eprintln!("New message: {:?}", session_msg.session_id);
+                            eprintln!("New message: {:?}", msg_with_file.message.session_id);
                         }
-                        self.session_store.update_session(session_msg);
+                        self.session_store.update_session_with_file(msg_with_file.message, msg_with_file.file_path);
                     }
                 }
                 
-                // Periodic refresh
+                // Periodic refresh (every second)
                 _ = refresh_interval.tick() => {
-                    // Force redraw every second
+                    // 時間経過による状態更新とUI再描画
+                    if self.verbose {
+                        eprintln!("Periodic refresh - updating session states");
+                    }
+                    self.session_store.update_status_by_time();
                 }
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn watch_mode(&mut self) -> anyhow::Result<()> {
+        use tokio::time::{interval, Duration};
+        
+        println!("🔍 Claude Session Monitor - Watch Mode");
+        println!("Press Ctrl+C to exit");
+        println!("Updates every second...\n");
+        
+        let mut update_interval = interval(Duration::from_secs(1));
+        let mut last_status_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        
+        loop {
+            tokio::select! {
+                // Handle file watcher events
+                msg = self.file_watcher.next_message() => {
+                    if let Some(msg_with_file) = msg {
+                        if self.verbose {
+                            println!("📨 New message: {}", msg_with_file.message.session_id);
+                        }
+                        self.session_store.update_session_with_file(msg_with_file.message, msg_with_file.file_path);
+                    }
+                }
+                
+                // Periodic update and display
+                _ = update_interval.tick() => {
+                    self.session_store.update_status_by_time();
+                    
+                    let sessions_by_project = self.session_store.get_sessions_by_project();
+                    let mut status_changed = false;
+                    
+                    // Check for status changes
+                    for (project_name, sessions) in &sessions_by_project {
+                        for session in sessions {
+                            let current_status = format!("{} {}", session.status.icon(), session.status.label());
+                            let session_key = format!("{}:{}", project_name, &session.id[..8]);
+                            
+                            if let Some(last_status) = last_status_map.get(&session_key) {
+                                if last_status != &current_status {
+                                    println!("🔄 {} - {} -> {}", 
+                                        session_key, 
+                                        last_status, 
+                                        current_status
+                                    );
+                                    status_changed = true;
+                                }
+                            } else {
+                                println!("✨ {} - {}", session_key, current_status);
+                                status_changed = true;
+                            }
+                            
+                            last_status_map.insert(session_key, current_status);
+                        }
+                    }
+                    
+                    // Remove sessions that no longer exist
+                    let current_keys: std::collections::HashSet<String> = sessions_by_project.iter()
+                        .flat_map(|(project_name, sessions)| {
+                            sessions.iter().map(move |s| format!("{}:{}", project_name, &s.id[..8]))
+                        })
+                        .collect();
+                    
+                    last_status_map.retain(|key, _| current_keys.contains(key));
+                    
+                    if status_changed && self.verbose {
+                        println!("📊 Active sessions: {}", 
+                            sessions_by_project.values().flatten().count()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn demo_mode(&mut self) -> anyhow::Result<()> {
+        use tokio::time::{Duration, interval};
+        use crate::session::{SessionMessage, MessageContent, ContentItem};
+        use chrono::Utc;
+        use serde_json::json;
+        use tempfile::NamedTempFile;
+        
+        println!("🎭 Claude Session Monitor - Demo Mode");
+        println!("Testing 1-second timer: tool_use → Active → (1s) → Approve");
+        println!("Press Ctrl+C to exit\n");
+        
+        // Create a demo session with tool_use message
+        let demo_session_id = "demo-session-12345678".to_string();
+        let temp_file = NamedTempFile::new()?;
+        
+        let tool_use_msg = SessionMessage {
+            parent_uuid: None,
+            user_type: "demo".to_string(),
+            cwd: "/demo/project".to_string(),
+            session_id: demo_session_id.clone(),
+            version: "1.0".to_string(),
+            message_type: "assistant".to_string(),
+            message: MessageContent::Assistant {
+                role: "assistant".to_string(),
+                content: vec![ContentItem::ToolUse {
+                    id: "demo_tool_id".to_string(),
+                    name: "Read".to_string(),
+                    input: json!({"file_path": "/demo/file.txt"}),
+                }],
+            },
+            uuid: "demo-uuid".to_string(),
+            timestamp: Utc::now(),
+            tool_use_result: None,
+        };
+        
+        // Add the demo session
+        self.session_store.update_session_with_file(tool_use_msg, temp_file.path().to_path_buf());
+        
+        println!("✨ Created demo session with tool_use message");
+        println!("Session ID: {}", &demo_session_id[..16]);
+        
+        let mut update_interval = interval(Duration::from_millis(500)); // Update every 500ms for more responsive demo
+        let mut elapsed_seconds = 0.0;
+        
+        loop {
+            tokio::select! {
+                _ = update_interval.tick() => {
+                    elapsed_seconds += 0.5;
+                    
+                    // Update session status
+                    self.session_store.update_status_by_time();
+                    
+                    // Get current status
+                    let sessions_by_project = self.session_store.get_sessions_by_project();
+                    if let Some(demo_session) = sessions_by_project.values()
+                        .flatten()
+                        .find(|s| s.id == demo_session_id) {
+                        
+                        println!("⏱️  {:.1}s - {} {} ({})", 
+                            elapsed_seconds,
+                            demo_session.status.icon(),
+                            demo_session.status.label(),
+                            &demo_session.id[..8]
+                        );
+                        
+                        // Show the transition at 1 second
+                        if elapsed_seconds >= 1.0 && elapsed_seconds < 1.5 {
+                            println!("🎯 1-second timer triggered! Status should now be 'Approve'");
+                        }
+                        
+                        // Exit after demonstrating for 3 seconds
+                        if elapsed_seconds >= 3.0 {
+                            println!("\n✅ Demo completed! The 1-second timer is working correctly.");
+                            break;
+                        }
+                    } else {
+                        println!("❌ Demo session not found");
+                        break;
+                    }
+                }
+            }
+        }
+        
         Ok(())
     }
 
