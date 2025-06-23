@@ -22,6 +22,7 @@ pub struct LauncherClient {
     project_name: Option<String>,
     session_id: String,
     verbose: bool,
+    log_file: Option<PathBuf>,
 }
 
 impl LauncherClient {
@@ -41,6 +42,7 @@ impl LauncherClient {
             project_name,
             session_id,
             verbose,
+            log_file: None,
         }
     }
 
@@ -59,6 +61,9 @@ impl LauncherClient {
 
         // 接続メッセージ送信
         self.send_connect_message().await?;
+
+        // Monitor からのメッセージを受信してログファイル設定を取得
+        self.receive_initial_config().await?;
 
         Ok(())
     }
@@ -85,6 +90,48 @@ impl LauncherClient {
         Ok(())
     }
 
+    /// Monitor からの初期設定を受信
+    async fn receive_initial_config(&mut self) -> Result<()> {
+        use crate::protocol::MonitorToLauncher;
+
+        if let Some(ref mut stream) = self.socket_stream {
+            let mut reader = BufReader::new(stream);
+            let mut buffer = String::new();
+            
+            // タイムアウト付きでメッセージを受信
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(2),
+                reader.read_line(&mut buffer)
+            ).await {
+                Ok(Ok(n)) if n > 0 => {
+                    if let Ok(message) = serde_json::from_str::<MonitorToLauncher>(&buffer.trim()) {
+                        match message {
+                            MonitorToLauncher::SetLogFile { log_file_path } => {
+                                self.log_file = log_file_path;
+                                if self.verbose {
+                                    if let Some(ref path) = self.log_file {
+                                        println!("📝 Log file configured: {}", path.display());
+                                    }
+                                }
+                            }
+                            _ => {
+                                // 他のメッセージは無視
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // タイムアウトまたは他のエラー：ログファイル設定なしとして続行
+                    if self.verbose {
+                        println!("⏰ No log file configuration received");
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Claude プロセス起動・監視
     pub async fn run_claude(&mut self) -> Result<()> {
         if self.verbose {
@@ -103,9 +150,19 @@ impl LauncherClient {
         let is_interactive = self.is_interactive_mode();
         if is_interactive {
             if self.verbose {
-                println!("🔄 Interactive mode detected, running without output monitoring");
+                if self.log_file.is_some() {
+                    println!("🔄 Interactive mode detected, running with log-only monitoring");
+                } else {
+                    println!("🔄 Interactive mode detected, running without monitoring");
+                }
             }
-            return self.claude_wrapper.run_directly().await;
+            
+            // ログファイルが設定されている場合は軽量監視モードで実行
+            if self.log_file.is_some() {
+                return self.run_claude_with_log_only().await;
+            } else {
+                return self.claude_wrapper.run_directly().await;
+            }
         }
 
         // Claude プロセス起動（非対話モードのみ監視）
@@ -149,6 +206,7 @@ impl LauncherClient {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
         let verbose = self.verbose;
+        let log_file = self.log_file.clone();
 
         let handle = tokio::spawn(async move {
             Self::monitor_output_stream(
@@ -157,6 +215,7 @@ impl LauncherClient {
                 session_id,
                 "stdout".to_string(),
                 verbose,
+                log_file,
             ).await;
         });
 
@@ -171,6 +230,7 @@ impl LauncherClient {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
         let verbose = self.verbose;
+        let log_file = self.log_file.clone();
 
         let handle = tokio::spawn(async move {
             Self::monitor_output_stream(
@@ -179,6 +239,7 @@ impl LauncherClient {
                 session_id,
                 "stderr".to_string(),
                 verbose,
+                log_file,
             ).await;
         });
 
@@ -192,10 +253,35 @@ impl LauncherClient {
         _session_id: String,
         stream_name: String,
         verbose: bool,
+        log_file: Option<PathBuf>,
     ) {
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
         let mut analyzer = StandardAnalyzer::new();
+
+        // ログファイルを開く（stdout のみ）
+        let mut log_writer = if stream_name == "stdout" {
+            if let Some(ref log_path) = log_file {
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_path)
+                    .await
+                {
+                    Ok(file) => Some(file),
+                    Err(e) => {
+                        if verbose {
+                            eprintln!("⚠️  Failed to open log file {}: {}", log_path.display(), e);
+                        }
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         loop {
             buffer.clear();
@@ -214,6 +300,19 @@ impl LauncherClient {
 
                     if verbose {
                         println!("📝 [{}] {}", stream_name, line);
+                    }
+
+                    // ログファイルに書き込み（stdout のみ）
+                    if let Some(ref mut writer) = log_writer {
+                        let log_line = format!("{}\n", line);
+                        if let Err(e) = writer.write_all(log_line.as_bytes()).await {
+                            if verbose {
+                                eprintln!("⚠️  Failed to write to log file: {}", e);
+                            }
+                        } else {
+                            // フラッシュして確実に書き込み
+                            let _ = writer.flush().await;
+                        }
                     }
 
                     // 出力を解析
@@ -306,6 +405,104 @@ impl LauncherClient {
         
         // --printオプションがない = 対話モード
         !args.contains(&"--print".to_string())
+    }
+
+    /// ログのみのClaude実行（インタラクティブモード用）
+    async fn run_claude_with_log_only(&mut self) -> Result<()> {
+        if self.verbose {
+            println!("🚀 Starting Claude with log-only mode: {}", self.claude_wrapper.to_command_string());
+        }
+
+        // Claude プロセス起動（stdin は inherit, stdout/stderr は pipe）
+        let mut claude_process = self.claude_wrapper.spawn().await?;
+
+        // stdout のみログ記録用に監視開始
+        let stdout_handle = if let Some(stdout) = claude_process.stdout.take() {
+            let log_file = self.log_file.clone();
+            let verbose = self.verbose;
+            
+            Some(tokio::spawn(async move {
+                Self::log_output_stream(stdout, log_file, verbose).await;
+            }))
+        } else {
+            None
+        };
+
+        // Claude プロセスの終了を待つ
+        let exit_status = claude_process.wait().await?;
+
+        if self.verbose {
+            println!("🏁 Claude process exited with status: {:?}", exit_status);
+        }
+
+        // ログ記録タスクを終了
+        if let Some(handle) = stdout_handle {
+            handle.abort();
+        }
+
+        Ok(())
+    }
+
+    /// 出力ストリームをログのみに記録（画面出力も行う）
+    async fn log_output_stream(
+        stream: tokio::process::ChildStdout,
+        log_file: Option<PathBuf>,
+        verbose: bool,
+    ) {
+        let mut reader = BufReader::new(stream);
+        let mut buffer = String::new();
+
+        // ログファイルを開く
+        let mut log_writer = if let Some(ref log_path) = log_file {
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .await
+            {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    if verbose {
+                        eprintln!("⚠️  Failed to open log file {}: {}", log_path.display(), e);
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        loop {
+            buffer.clear();
+            
+            match reader.read_line(&mut buffer).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let line = buffer.trim_end(); // 改行を保持
+                    
+                    // ユーザーには通常通り出力表示
+                    println!("{}", line);
+
+                    // ログファイルに書き込み
+                    if let Some(ref mut writer) = log_writer {
+                        let log_line = format!("{}\n", line);
+                        if let Err(e) = writer.write_all(log_line.as_bytes()).await {
+                            if verbose {
+                                eprintln!("⚠️  Failed to write to log file: {}", e);
+                            }
+                        } else {
+                            let _ = writer.flush().await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("📡 Read error from stdout: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     /// Launcher 情報取得

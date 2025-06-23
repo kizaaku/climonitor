@@ -28,6 +28,10 @@ struct Cli {
     /// Non-interactive mode (print status and exit)
     #[arg(long)]
     no_tui: bool,
+    
+    /// Log file path to save Claude's standard output
+    #[arg(long)]
+    log_file: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -36,27 +40,30 @@ async fn main() -> anyhow::Result<()> {
     
     if cli.live {
         // ライブモード：Monitor サーバーとして動作
-        run_live_mode(cli.verbose).await?;
+        run_live_mode(cli.verbose, cli.log_file).await?;
     } else if cli.no_tui {
         // 非対話モード：一度だけ状態表示
         run_snapshot_mode(cli.verbose).await?;
     } else {
         // デフォルト：ライブモード
         println!("💡 Starting in live mode. Use --no-tui for snapshot mode.");
-        run_live_mode(cli.verbose).await?;
+        run_live_mode(cli.verbose, cli.log_file).await?;
     }
     
     Ok(())
 }
 
 /// ライブモード実行
-async fn run_live_mode(verbose: bool) -> anyhow::Result<()> {
+async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> anyhow::Result<()> {
     if verbose {
         println!("🔧 Starting monitor server in verbose mode...");
+        if let Some(ref log_path) = log_file {
+            println!("📝 Log file: {}", log_path.display());
+        }
     }
 
     // Monitor サーバー開始
-    let mut server = MonitorServer::new(verbose)?;
+    let mut server = MonitorServer::new(verbose, log_file)?;
     server.start().await?;
 
     // UI更新チャネル取得

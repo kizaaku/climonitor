@@ -86,6 +86,10 @@ pub enum MonitorToLauncher {
     RequestMetrics,
     /// シャットダウン指示
     Shutdown,
+    /// ログファイル設定
+    SetLogFile {
+        log_file_path: Option<PathBuf>,
+    },
 }
 
 /// launcher情報

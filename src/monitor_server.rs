@@ -28,10 +28,11 @@ pub struct MonitorServer {
     ui_update_sender: broadcast::Sender<()>,
     task_handles: Vec<JoinHandle<()>>,
     verbose: bool,
+    log_file: Option<PathBuf>,
 }
 
 impl MonitorServer {
-    pub fn new(verbose: bool) -> Result<Self> {
+    pub fn new(verbose: bool, log_file: Option<PathBuf>) -> Result<Self> {
         let socket_path = Self::get_socket_path()?;
         let session_manager = Arc::new(RwLock::new(SessionManager::new()));
         let connections = Arc::new(RwLock::new(HashMap::new()));
@@ -45,6 +46,7 @@ impl MonitorServer {
             ui_update_sender,
             task_handles: Vec::new(),
             verbose,
+            log_file,
         })
     }
 
@@ -140,6 +142,7 @@ impl MonitorServer {
         let session_manager = Arc::clone(&self.session_manager);
         let ui_update_sender = self.ui_update_sender.clone();
         let verbose = self.verbose;
+        let log_file = self.log_file.clone();
 
         tokio::spawn(async move {
             if let Err(e) = Self::handle_connection(
@@ -148,6 +151,7 @@ impl MonitorServer {
                 session_manager,
                 ui_update_sender,
                 verbose,
+                log_file,
             ).await {
                 if verbose {
                     eprintln!("⚠️  Connection {} error: {}", connection_id, e);
@@ -163,13 +167,23 @@ impl MonitorServer {
         session_manager: Arc<RwLock<SessionManager>>,
         ui_update_sender: broadcast::Sender<()>,
         verbose: bool,
+        log_file: Option<PathBuf>,
     ) -> Result<()> {
-        let stream = {
+        let mut stream = {
             let mut connections_guard = connections.write().await;
             connections_guard.remove(&connection_id)
                 .ok_or_else(|| anyhow::anyhow!("Connection not found: {}", connection_id))?
                 .stream
         };
+
+        // ログファイル設定を送信
+        if let Some(ref log_path) = log_file {
+            if let Err(e) = Self::send_log_file_config(&mut stream, log_path.clone()).await {
+                if verbose {
+                    eprintln!("⚠️  Failed to send log file config: {}", e);
+                }
+            }
+        }
 
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
@@ -251,6 +265,24 @@ impl MonitorServer {
     /// 現在の統計情報取得
     pub async fn get_stats(&self) -> SessionStats {
         self.session_manager.read().await.get_stats()
+    }
+
+    /// ログファイル設定をlauncherに送信
+    async fn send_log_file_config(stream: &mut UnixStream, log_path: PathBuf) -> Result<()> {
+        use crate::protocol::MonitorToLauncher;
+        use tokio::io::AsyncWriteExt;
+
+        let message = MonitorToLauncher::SetLogFile {
+            log_file_path: Some(log_path),
+        };
+
+        let json_data = serde_json::to_string(&message)?;
+        let data_with_newline = format!("{}\n", json_data);
+
+        stream.write_all(data_with_newline.as_bytes()).await?;
+        stream.flush().await?;
+
+        Ok(())
     }
 
     /// セッションマネージャー取得
