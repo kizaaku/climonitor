@@ -80,6 +80,11 @@ impl ClaudeWrapper {
         &self.args
     }
 
+    /// 作業ディレクトリの取得
+    pub fn get_working_dir(&self) -> Option<&std::path::PathBuf> {
+        self.working_dir.as_ref()
+    }
+
     /// プロジェクト名を推測
     pub fn guess_project_name(&self) -> Option<String> {
         // --project オプションから取得を試行

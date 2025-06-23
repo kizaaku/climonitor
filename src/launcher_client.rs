@@ -407,37 +407,56 @@ impl LauncherClient {
         !args.contains(&"--print".to_string())
     }
 
-    /// ログのみのClaude実行（インタラクティブモード用）
+    /// scriptコマンドを使ったインタラクティブClaude実行（ログ付き）
     async fn run_claude_with_log_only(&mut self) -> Result<()> {
         if self.verbose {
-            println!("🚀 Starting Claude with log-only mode: {}", self.claude_wrapper.to_command_string());
+            println!("🚀 Starting Claude with script logging: {}", self.claude_wrapper.to_command_string());
         }
 
-        // Claude プロセス起動（stdin は inherit, stdout/stderr は pipe）
-        let mut claude_process = self.claude_wrapper.spawn().await?;
+        use tokio::process::Command;
 
-        // stdout のみログ記録用に監視開始
-        let stdout_handle = if let Some(stdout) = claude_process.stdout.take() {
-            let log_file = self.log_file.clone();
-            let verbose = self.verbose;
+        // ログファイルパスが設定されている場合
+        if let Some(ref log_path) = self.log_file {
+            // claude の引数を構築
+            let claude_args = self.claude_wrapper.get_args();
+            let mut full_args = vec!["claude".to_string()];
+            full_args.extend(claude_args.iter().cloned());
+
+            // script コマンドでClaude実行をログ記録
+            // -q: quiet mode (no startup/done messages)
+            // -a: append to log file
+            let script_command = format!("script -q -a {} {}", 
+                log_path.to_string_lossy(),
+                full_args.join(" ")
+            );
+
+            if self.verbose {
+                println!("📝 Running: sh -c '{}'", script_command);
+            }
+
+            // シェル経由でコマンド実行
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(&script_command);
             
-            Some(tokio::spawn(async move {
-                Self::log_output_stream(stdout, log_file, verbose).await;
-            }))
+            if let Some(dir) = self.claude_wrapper.get_working_dir() {
+                cmd.current_dir(dir);
+            }
+
+            // 標準入出力はそのまま通す（インタラクティブ性を保持）
+            cmd.stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .stdin(std::process::Stdio::inherit());
+
+            // プロセス実行・待機
+            let exit_status = cmd.status().await
+                .map_err(|e| anyhow::anyhow!("Failed to run Claude with script: {}", e))?;
+
+            if self.verbose {
+                println!("🏁 Claude script process exited with status: {:?}", exit_status);
+            }
         } else {
-            None
-        };
-
-        // Claude プロセスの終了を待つ
-        let exit_status = claude_process.wait().await?;
-
-        if self.verbose {
-            println!("🏁 Claude process exited with status: {:?}", exit_status);
-        }
-
-        // ログ記録タスクを終了
-        if let Some(handle) = stdout_handle {
-            handle.abort();
+            // ログファイル未設定の場合は通常実行
+            return self.claude_wrapper.run_directly().await;
         }
 
         Ok(())
