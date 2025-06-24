@@ -14,8 +14,8 @@ static SCREEN_CONTROL_PATTERN: OnceLock<Regex> = OnceLock::new();
 /// Initialize regex patterns
 fn init_patterns() {
     ANSI_ESCAPE_PATTERN.get_or_init(|| {
-        // Basic ANSI color and formatting codes
-        Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap()
+        // ANSI escape sequences including DEC private modes like [?25h
+        Regex::new(r"\x1b\[[?]?[0-9;]*[a-zA-Z]").unwrap()
     });
     
     CURSOR_CONTROL_PATTERN.get_or_init(|| {

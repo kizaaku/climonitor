@@ -8,19 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build the project (creates both ccmonitor and ccmonitor-launcher)
 cargo build --release
 
-# Phase 3: Real-time monitoring with ccmonitor-launcher
+# Real-time monitoring with ccmonitor-launcher
 ccmonitor-launcher claude           # Launch Claude with real-time monitoring
 ccmonitor --live                    # Connect to launcher for live updates
 
-# Traditional JSONL-based monitoring
-cargo run                           # TUI mode
-cargo run -- --no-tui              # Non-interactive mode
-cargo run -- --watch               # Continuous monitoring
-cargo run -- --demo                # Test 1-second timer
-
-# Build options
-cargo run -- --no-tui --verbose
-cargo run -- --project ccmonitor
+# Development and testing
+cargo run                           # Build and run in live mode
+cargo run -- --no-tui              # Non-interactive snapshot mode
+cargo run -- --verbose             # Verbose output for debugging
 
 # Install locally
 cargo install --path .
@@ -28,72 +23,79 @@ cargo install --path .
 # Run binaries directly after build
 ./target/release/ccmonitor --live
 ./target/release/ccmonitor-launcher claude
+
+# Log file functionality
+ccmonitor --live --log-file /path/to/output.log
+ccmonitor-launcher --log-file /path/to/output.log claude
 ```
 
 ## Architecture Overview
 
-This is a Rust CLI tool that monitors Claude session files in real-time. The application has a modular architecture with clear separation of concerns:
+This is a Rust CLI tool that provides real-time monitoring of Claude Code sessions using PTY (pseudo-terminal) integration and Unix Domain Socket communication. The application has been completely redesigned with a client-server architecture:
 
 ### Core Components
 
-#### Traditional JSONL Monitoring (Phase 1/2)
-- **`main.rs`**: CLI argument parsing with clap, TTY detection, and mode selection (TUI vs non-interactive)
-- **`app.rs`**: Main application orchestrator that coordinates all components and handles both TUI and non-TUI modes
-- **`config.rs`**: Configuration management including environment variable loading and log directory resolution
-- **`session.rs`**: Core domain logic for Claude session state management and JSONL message parsing
-- **`watcher.rs`**: File system monitoring using notify crate to watch configurable log directory
-- **`ui.rs`**: Terminal UI rendering using ratatui for the interactive dashboard
-- **`unicode_utils.rs`**: Unicode-safe text handling utilities for Japanese text and emoji display
+#### Monitor Server Architecture (Current Implementation)
+- **`main.rs`**: CLI argument parsing and mode selection (live/snapshot modes)
+- **`monitor_server.rs`**: Central monitoring server that manages client connections and state broadcasting
+- **`session_manager.rs`**: Session state management and tracking across multiple Claude instances
+- **`live_ui.rs`**: Real-time terminal UI for displaying session status and updates
+- **`protocol.rs`**: Communication protocol definitions for client-server messaging
+- **`launcher_client.rs`**: Claude Code wrapper client with PTY integration and state reporting
 
-#### Real-time Output Monitoring (Phase 3)
-- **`launcher.rs`**: Claude Code process wrapper with stdout/stderr monitoring
-- **`output_analyzer.rs`**: Real-time log analysis engine with regex pattern matching for state detection
-- **`state_broadcaster.rs`**: Unix Domain Socket-based state broadcasting system for real-time updates
-- **`ccmonitor-launcher`**: Standalone binary that launches Claude Code with real-time monitoring
+#### PTY-based Process Monitoring
+- **`claude_wrapper.rs`**: PTY-based Claude Code process execution with bidirectional I/O
+- **`process_monitor.rs`**: Real-time process state monitoring and event detection
+- **`standard_analyzer.rs`**: ANSI-aware output analysis for state detection from Claude's debug output
+- **`ansi_utils.rs`**: ANSI escape sequence handling and terminal output processing
+- **`unicode_utils.rs`**: Unicode-safe text handling utilities for Japanese text and emoji display
 
 ### Data Flow Architecture
 
-#### Phase 1/2: JSONL File Monitoring
-1. **Configuration Loading**: `Config` loads environment variables from `.env.local` to determine log directory
-2. **File Monitoring**: `FileWatcher` monitors configurable log directory (default: `~/.claude/projects/*.jsonl`) using async file system events
-3. **Message Parsing**: Raw JSONL lines are deserialized into `SessionMessage` structs with serde
-4. **State Management**: `SessionStore` maintains a HashMap of active sessions, updating status based on message analysis
-5. **Status Classification**: Sessions are categorized as Active/Waiting/Error/Idle based on message content and timing
-6. **Display**: Either TUI mode (real-time dashboard) or non-TUI mode (snapshot output)
+#### Client-Server Communication Model
+1. **Monitor Server Startup**: `ccmonitor --live` starts the central monitoring server with Unix Domain Socket
+2. **Launcher Connection**: `ccmonitor-launcher` connects to monitor server and registers as client
+3. **PTY Process Launch**: Launcher creates PTY session and spawns Claude Code with environment variables
+4. **Bidirectional I/O**: PTY handles all terminal I/O while capturing output for analysis
+5. **State Analysis**: `StandardAnalyzer` processes ANSI-cleaned output to detect Claude state changes
+6. **State Broadcasting**: Session state updates are sent to monitor server via protocol messages
+7. **Live Display**: Monitor server updates `LiveUI` with real-time session status and tool execution
 
-#### Phase 3: Real-time Output Stream Monitoring
-1. **Process Launch**: `ccmonitor-launcher` starts Claude Code as child process with `ANTHROPIC_LOG=debug`
-2. **Output Capture**: stdout/stderr streams are captured and monitored in real-time
-3. **Pattern Analysis**: `OutputAnalyzer` uses regex patterns to detect state changes from debug logs
-4. **State Broadcasting**: Unix Domain Socket broadcasts state updates to connected clients
-5. **Live Updates**: `ccmonitor --live` receives real-time state updates and displays current status
-6. **Hybrid Display**: Combines real-time updates with traditional JSONL monitoring for comprehensive view
+#### PTY Integration Architecture
+1. **PTY Creation**: `portable-pty` creates pseudo-terminal with proper size detection
+2. **Process Spawning**: Claude Code launched in PTY environment with preserved interactivity
+3. **I/O Monitoring**: Simultaneous stdout/stderr capture without disrupting user interaction
+4. **ANSI Processing**: `ansi_utils` strips escape sequences for clean state analysis
+5. **Signal Handling**: Proper signal forwarding for graceful shutdown and resize events
 
 ### Session Status Logic
 
-#### Traditional Status Detection (Phase 1/2)
-The session status determination is core business logic in `session.rs`:
-- **Active (🟢)**: Claude executing tools or waiting for tool results (`tool_use` stop reason)
-- **Approve (🟡)**: Claude completed response, awaiting user input (`end_turn` stop reason)  
-- **Finish (🔵)**: Text response completed
-- **Error (🔴)**: Tool execution errors detected in `tool_use_result` field
-- **Idle (⚪)**: No activity for >5 minutes
+#### PTY-based Real-time Status Detection
+Enhanced status detection using direct Claude Code output analysis via PTY integration:
+- **Active (🟢)**: Detects tool execution patterns and API request indicators in real-time
+- **Thinking (🤔)**: Claude processing user input or generating responses
+- **Tool Use (🔧)**: Specific tool execution detected with tool name identification
+- **Waiting (⏳)**: User approval required for tool execution or input needed
+- **Error (🔴)**: Exception patterns, tool failures, or process errors detected
+- **Idle (⚪)**: No activity detected for configured timeout period
+- **Connected (🔗)**: Active PTY session with Claude Code process running
 
-#### Real-time Status Detection (Phase 3)
-Enhanced status detection using Claude Code debug output patterns:
-- **API Requests**: Detects "Making API request" patterns → Active
-- **Tool Execution**: Detects "Tool execution started" / "using tool:" → Active with tool name
-- **User Approval**: Detects "Waiting for user approval" / "Press Enter to continue" → Approve
-- **Tool Completion**: Detects "Tool execution completed" / "tool finished" → Finish
-- **Error Detection**: Detects "Error:" / "Exception:" / "Failed:" patterns → Error
-- **Session Identification**: Extracts session IDs from debug logs for accurate tracking
+#### Pattern Recognition System
+`StandardAnalyzer` uses regex patterns to identify:
+- **Tool Execution**: "Tool:" patterns, permission requests, execution confirmations
+- **API Communication**: Request/response cycles, token usage, rate limiting
+- **User Interaction**: Input prompts, approval requests, confirmation dialogs
+- **Error States**: Exception traces, tool failures, connection issues
+- **Process States**: Startup, shutdown, signal handling, resource usage
 
 ### Async Event Loop Design
 
-The TUI mode uses `tokio::select!` to handle:
-- File watcher events (new session messages)
-- Keyboard input (q/Esc to quit, r to refresh)
-- Periodic UI refresh timer (1-second intervals)
+The monitor server uses `tokio::select!` to handle:
+- Unix Domain Socket client connections and disconnections
+- Protocol message processing from launcher clients
+- PTY I/O events and state change notifications
+- UI update broadcasting to connected interfaces
+- Signal handling for graceful shutdown and cleanup
 
 ### Unicode and Internationalization
 
@@ -104,30 +106,34 @@ The codebase includes comprehensive Unicode support through `unicode_utils.rs`:
 
 ## Key Design Patterns
 
-- **Graceful Degradation**: Automatically falls back to non-TUI mode when TTY is unavailable
-- **Error Resilience**: Continues operation even if individual session files cannot be parsed
-- **Memory Efficiency**: Maintains bounded message channels and periodic cleanup
-- **Cross-Platform**: Uses crossterm for terminal handling across different operating systems
+- **Client-Server Architecture**: Central monitor server with multiple launcher clients
+- **PTY Integration**: True terminal emulation for seamless Claude Code interaction
+- **Real-time State Detection**: Immediate status updates via output stream analysis
+- **Error Resilience**: Continues operation even if launcher clients disconnect
+- **Memory Efficiency**: Bounded channels and automatic cleanup of stale sessions
+- **Cross-Platform**: Uses portable-pty for consistent terminal handling
 
 ## Environment Configuration
 
-The application supports custom log directory configuration through environment variables:
+The application supports configuration through environment variables and command-line options:
 
 ```bash
-# Create .env.local file for custom log directory
-echo "CLAUDE_LOG_DIR=/custom/path/to/claude/logs" > .env.local
+# Enable debug logging in Claude Code for detailed analysis
+export ANTHROPIC_LOG=debug
 
-# Enable debug mode for detailed logging
-echo "CCMONITOR_DEBUG=1" >> .env.local
+# Optional: Custom socket path for client-server communication
+export CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
 ```
 
 **Environment Variables:**
-- `CLAUDE_LOG_DIR`: Custom path to Claude session log directory (defaults to `~/.claude/projects/`)
-- `CCMONITOR_DEBUG`: Enable verbose debug output for JSON parsing and file operations
+- `ANTHROPIC_LOG`: Set to `debug` for detailed Claude output analysis (recommended)
+- `CCMONITOR_SOCKET_PATH`: Custom Unix Domain Socket path (optional)
+- `RUST_LOG`: Standard Rust logging level for ccmonitor itself
 
-## Phase 3: Real-time Monitoring Usage
+## Real-time Monitoring Usage
 
 ### Quick Start
+
 ```bash
 # Terminal 1: Launch Claude with monitoring
 ccmonitor-launcher claude
@@ -137,6 +143,7 @@ ccmonitor --live
 ```
 
 ### Advanced Usage
+
 ```bash
 # Verbose monitoring (see debug patterns)
 ccmonitor-launcher --verbose claude
@@ -147,28 +154,24 @@ ccmonitor-launcher claude --help  # Any Claude args work
 
 # Different viewing modes
 ccmonitor --live --verbose         # Detailed real-time updates
-ccmonitor --live --project myproj  # Filter by project
+ccmonitor --no-tui                 # Snapshot mode (one-time status)
 ```
 
 ### Architecture Benefits
 
-**Phase 3 Advantages:**
-- **Real-time state detection**: Immediate status updates from Claude Code's debug output
+**Current Implementation Advantages:**
+- **Real-time state detection**: Immediate status updates from Claude Code's PTY output
+- **True interactivity**: PTY preserves full Claude Code functionality
 - **Accurate tool monitoring**: Direct detection of tool permission requests vs execution
 - **Session lifecycle tracking**: Complete visibility into Claude Code's internal state transitions
-- **Hybrid monitoring**: Combines real-time updates with traditional JSONL fallback
+- **Multi-session support**: Monitor multiple Claude instances simultaneously
 
-**When to use Phase 3:**
-- Need immediate status updates
-- Want to monitor tool permission flow
-- Debugging Claude Code behavior
-- Real-time development workflow
-
-**When to use traditional mode:**
-- Analyzing historical sessions
-- Low-overhead monitoring
-- Environments where process wrapping isn't feasible
-- Retrospective session analysis
+**Use Cases:**
+- Development workflow monitoring
+- Tool execution debugging
+- Session performance analysis
+- Multi-project coordination
+- Real-time status dashboards
 
 ## Log File Functionality
 
@@ -176,45 +179,43 @@ ccmonitor --live --project myproj  # Filter by project
 ccmonitor supports comprehensive logging of Claude's standard output to files using the `--log-file` option. This feature works for both interactive and non-interactive modes while preserving Claude's full functionality.
 
 ### Usage
+
 ```bash
 # Start monitor with log file option
-ccmonitor --log-file /path/to/logfile.log
+ccmonitor --live --log-file /path/to/logfile.log
 
 # Launch Claude sessions (logs automatically recorded)
-ccmonitor-launcher claude                    # Interactive mode with logging
-ccmonitor-launcher claude --print "query"   # Non-interactive mode with logging
+ccmonitor-launcher --log-file /path/to/output.log claude
+ccmonitor-launcher --log-file /path/to/output.log claude --print "query"
 ```
 
 ### Implementation Details
 
-#### Non-interactive Mode (--print)
-- Direct stdout/stderr capture and file writing
-- Maintains exact Claude output format
-- Low overhead with buffered I/O
+#### PTY-based Logging
+- Direct capture from PTY stdout/stderr streams
+- Preserves all terminal output including ANSI escape sequences
+- Real-time writing with proper buffering
+- Maintains full interactivity while logging
 
-#### Interactive Mode (Default)
-- Uses `script` command to preserve true interactivity
-- Captures full terminal session including ANSI escape sequences
-- Maintains Claude's TTY-based UI features
-- Implementation: `script -q -a logfile claude [args]`
-
-#### Technical Architecture
-1. **Monitor Server**: Receives log file path via CLI argument
-2. **Configuration Transmission**: Sends log file config to launcher via Unix Domain Socket
-3. **Launcher Client**: Receives log configuration and applies appropriate logging method
-4. **Mode Detection**: Automatically detects interactive vs non-interactive based on `--print` argument
+#### Log File Transmission
+1. **Launcher Configuration**: Log file path specified via CLI argument
+2. **Monitor Communication**: Log configuration sent to monitor server via protocol
+3. **PTY Integration**: Logging handled at PTY level for complete capture
+4. **Real-time Writing**: Output written immediately with automatic flushing
 
 ### Key Benefits
-- **Preserves Interactivity**: Interactive mode remains fully functional
-- **Complete Output Capture**: All output including control characters logged
-- **Seamless Integration**: No user workflow changes required
-- **Mode-Agnostic**: Works consistently across all Claude execution modes
+
+- **Preserves Interactivity**: PTY maintains full Claude Code functionality
+- **Complete Output Capture**: All terminal output including ANSI sequences logged
+- **Real-time Writing**: Immediate output capture with proper flushing
+- **Seamless Integration**: Transparent logging without workflow changes
 
 ### File Format
-- **Non-interactive**: Clean text output matching Claude's standard output
-- **Interactive**: Full terminal session recording with ANSI escape sequences
+
+- **Full Terminal Output**: Complete PTY session including ANSI escape sequences
 - **Append Mode**: Multiple sessions append to same log file
-- **Real-time Writing**: Output written immediately with proper flushing
+- **Real-time Writing**: Output written immediately as it occurs
+- **Binary-safe**: Handles all terminal control characters correctly
 
 ## Future Extension Considerations
 
@@ -273,12 +274,14 @@ This approach ensures the current system remains simple and maintainable while p
 ## Testing Strategy
 
 When developing:
-- Use `--verbose` flag to see detailed debugging output
-- Test both TUI and `--no-tui` modes to ensure compatibility
-- Verify Unicode handling with Japanese project names and messages
-- Test with missing default directory and custom `CLAUDE_LOG_DIR` for proper error handling
-- Create `.env.local` with custom settings to test configuration loading
-- Test Phase 3 real-time monitoring with `ccmonitor-launcher --verbose`
-- Verify error handling when ccmonitor-launcher is not running
-- Test log file functionality with both interactive and non-interactive modes
-- Verify log file append behavior and real-time writing
+
+- Use `--verbose` flag to see detailed debugging output and state detection
+- Test both live and snapshot modes (`--live` vs `--no-tui`)
+- Verify Unicode handling with Japanese project names and output
+- Test PTY integration with various terminal sizes and capabilities
+- Test client-server communication with multiple launcher instances
+- Verify error handling when monitor server is not running
+- Test log file functionality with different output patterns
+- Verify signal handling and graceful shutdown behavior
+- Test ANSI escape sequence processing and cleaning
+- Verify real-time state detection accuracy with actual Claude sessions
