@@ -13,6 +13,7 @@ use crate::session_manager::{SessionManager, SessionStats};
 
 /// 接続情報
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Connection {
     id: String,
     stream: UnixStream,
@@ -336,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_creation() {
-        let server = MonitorServer::new(false);
+        let server = MonitorServer::new(false, None);
         assert!(server.is_ok());
     }
 

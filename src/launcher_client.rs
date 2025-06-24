@@ -8,7 +8,7 @@ use crate::claude_wrapper::ClaudeWrapper;
 use crate::monitor_server::MonitorServer;
 use crate::process_monitor::ProcessMonitor;
 use crate::protocol::{
-    LauncherToMonitor, generate_connection_id, generate_session_id
+    LauncherToMonitor, generate_connection_id
 };
 use crate::standard_analyzer::StandardAnalyzer;
 
@@ -29,7 +29,7 @@ impl LauncherClient {
     /// 新しいLauncherClientを作成
     pub fn new(claude_args: Vec<String>, verbose: bool) -> Self {
         let launcher_id = generate_connection_id();
-        let session_id = generate_session_id();
+        let session_id = format!("session-{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
         let claude_wrapper = ClaudeWrapper::new(claude_args);
         let project_name = claude_wrapper.guess_project_name();
 
@@ -462,67 +462,6 @@ impl LauncherClient {
         Ok(())
     }
 
-    /// 出力ストリームをログのみに記録（画面出力も行う）
-    async fn log_output_stream(
-        stream: tokio::process::ChildStdout,
-        log_file: Option<PathBuf>,
-        verbose: bool,
-    ) {
-        let mut reader = BufReader::new(stream);
-        let mut buffer = String::new();
-
-        // ログファイルを開く
-        let mut log_writer = if let Some(ref log_path) = log_file {
-            match tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-                .await
-            {
-                Ok(file) => Some(file),
-                Err(e) => {
-                    if verbose {
-                        eprintln!("⚠️  Failed to open log file {}: {}", log_path.display(), e);
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        loop {
-            buffer.clear();
-            
-            match reader.read_line(&mut buffer).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let line = buffer.trim_end(); // 改行を保持
-                    
-                    // ユーザーには通常通り出力表示
-                    println!("{}", line);
-
-                    // ログファイルに書き込み
-                    if let Some(ref mut writer) = log_writer {
-                        let log_line = format!("{}\n", line);
-                        if let Err(e) = writer.write_all(log_line.as_bytes()).await {
-                            if verbose {
-                                eprintln!("⚠️  Failed to write to log file: {}", e);
-                            }
-                        } else {
-                            let _ = writer.flush().await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    if verbose {
-                        eprintln!("📡 Read error from stdout: {}", e);
-                    }
-                    break;
-                }
-            }
-        }
-    }
 
     /// Launcher 情報取得
     pub fn get_info(&self) -> LauncherInfo {

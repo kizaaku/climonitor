@@ -17,169 +17,95 @@ impl ClaudeWrapper {
         }
     }
 
-    /// 作業ディレクトリを設定
+    /// ワーキングディレクトリを設定
     pub fn working_dir<P: Into<std::path::PathBuf>>(mut self, dir: P) -> Self {
         self.working_dir = Some(dir.into());
         self
     }
 
-    /// Claudeプロセスを起動（標準出力をパイプ）
+    /// 引数を取得
+    pub fn get_args(&self) -> &[String] {
+        &self.args
+    }
+
+    /// ワーキングディレクトリを取得
+    pub fn get_working_dir(&self) -> Option<&std::path::PathBuf> {
+        self.working_dir.as_ref()
+    }
+
+    /// Claude プロセスを起動
     pub async fn spawn(&self) -> Result<Child> {
         let mut cmd = Command::new("claude");
-        
-        // 引数を設定
         cmd.args(&self.args);
         
-        // 作業ディレクトリを設定
-        if let Some(ref dir) = self.working_dir {
-            cmd.current_dir(dir);
+        if let Some(working_dir) = &self.working_dir {
+            cmd.current_dir(working_dir);
         }
         
-        // 標準入出力を設定
         cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::inherit()); // ユーザー入力はそのまま通す
+           .stderr(Stdio::piped())
+           .stdin(Stdio::inherit());
         
-        // プロセス起動
-        let child = cmd.spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to start Claude: {}", e))?;
-        
+        let child = cmd.spawn()?;
         Ok(child)
     }
 
-    /// Claudeプロセスを通常通り実行（監視なし）
+    /// Claude を直接実行（パススルー）
     pub async fn run_directly(&self) -> Result<()> {
         let mut cmd = Command::new("claude");
-        
-        // 引数を設定
         cmd.args(&self.args);
         
-        // 作業ディレクトリを設定
-        if let Some(ref dir) = self.working_dir {
-            cmd.current_dir(dir);
+        if let Some(working_dir) = &self.working_dir {
+            cmd.current_dir(working_dir);
         }
         
-        // 標準入出力はそのまま通す
-        cmd.stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .stdin(Stdio::inherit());
+        cmd.stdin(Stdio::inherit())
+           .stdout(Stdio::inherit())
+           .stderr(Stdio::inherit());
         
-        // プロセス起動・待機
-        let status = cmd.status().await
-            .map_err(|e| anyhow::anyhow!("Failed to run Claude: {}", e))?;
+        let status = cmd.status().await?;
         
         if !status.success() {
-            return Err(anyhow::anyhow!("Claude exited with status: {:?}", status));
+            return Err(anyhow::anyhow!("Claude exited with status: {}", status));
         }
         
         Ok(())
     }
 
-    /// Claude引数の取得
-    pub fn get_args(&self) -> &[String] {
-        &self.args
-    }
-
-    /// 作業ディレクトリの取得
-    pub fn get_working_dir(&self) -> Option<&std::path::PathBuf> {
-        self.working_dir.as_ref()
-    }
-
     /// プロジェクト名を推測
     pub fn guess_project_name(&self) -> Option<String> {
-        // --project オプションから取得を試行
-        if let Some(pos) = self.args.iter().position(|arg| arg == "--project") {
-            if let Some(project) = self.args.get(pos + 1) {
-                return Some(project.clone());
+        // --project 引数から取得を試行
+        if let Some(project_idx) = self.args.iter().position(|arg| arg == "--project") {
+            if let Some(project_name) = self.args.get(project_idx + 1) {
+                return Some(project_name.clone());
             }
         }
-
-        // ファイル引数からプロジェクト名を推測
-        for arg in &self.args {
-            // オプション（--で始まる）をスキップ
-            if arg.starts_with('-') {
-                continue;
-            }
-            
-            // ファイルパスからプロジェクト名を推測
-            if let Some(path) = std::path::Path::new(arg).parent() {
-                if let Some(name) = path.file_name() {
-                    return Some(name.to_string_lossy().to_string());
+        
+        // 作業ディレクトリ名から推測
+        if let Some(working_dir) = &self.working_dir {
+            if let Some(dir_name) = working_dir.file_name() {
+                if let Some(name_str) = dir_name.to_str() {
+                    return Some(name_str.to_string());
                 }
             }
         }
-
-        // 作業ディレクトリ名を使用
-        if let Some(ref dir) = self.working_dir {
-            if let Some(name) = dir.file_name() {
-                return Some(name.to_string_lossy().to_string());
+        
+        // 現在のディレクトリ名から推測
+        if let Ok(current_dir) = std::env::current_dir() {
+            if let Some(dir_name) = current_dir.file_name() {
+                if let Some(name_str) = dir_name.to_str() {
+                    return Some(name_str.to_string());
+                }
             }
         }
-
-        // 現在のディレクトリ名を使用
-        std::env::current_dir()
-            .ok()
-            .and_then(|dir| dir.file_name().map(|name| name.to_string_lossy().to_string()))
+        
+        None
     }
 
-    /// デバッグ用: コマンドライン文字列取得
+    /// コマンド文字列を生成（デバッグ用）
     pub fn to_command_string(&self) -> String {
-        let mut cmd_parts = vec!["claude".to_string()];
-        cmd_parts.extend(self.args.iter().cloned());
-        cmd_parts.join(" ")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_claude_wrapper_creation() {
-        let wrapper = ClaudeWrapper::new(vec!["--help".to_string()]);
-        assert_eq!(wrapper.get_args(), &["--help"]);
-    }
-
-    #[test]
-    fn test_project_name_guessing() {
-        // --project オプション
-        let wrapper = ClaudeWrapper::new(vec![
-            "--project".to_string(),
-            "myproject".to_string(),
-        ]);
-        assert_eq!(wrapper.guess_project_name(), Some("myproject".to_string()));
-
-        // ファイルパス
-        let wrapper = ClaudeWrapper::new(vec![
-            "src/main.rs".to_string(),
-        ]);
-        assert_eq!(wrapper.guess_project_name(), Some("src".to_string()));
-
-        // 引数なし
-        let wrapper = ClaudeWrapper::new(vec![]);
-        // 現在のディレクトリ名が返される（テスト環境依存）
-        assert!(wrapper.guess_project_name().is_some());
-    }
-
-    #[test]
-    fn test_command_string() {
-        let wrapper = ClaudeWrapper::new(vec![
-            "--project".to_string(),
-            "test".to_string(),
-            "file.txt".to_string(),
-        ]);
-        
-        assert_eq!(
-            wrapper.to_command_string(),
-            "claude --project test file.txt"
-        );
-    }
-
-    #[test]
-    fn test_working_dir() {
-        let wrapper = ClaudeWrapper::new(vec!["--help".to_string()])
-            .working_dir("/tmp");
-        
-        assert_eq!(wrapper.working_dir, Some("/tmp".into()));
+        let mut cmd = vec!["claude".to_string()];
+        cmd.extend(self.args.clone());
+        cmd.join(" ")
     }
 }

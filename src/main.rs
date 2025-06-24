@@ -151,13 +151,6 @@ async fn try_connect_to_monitor() -> anyhow::Result<std::sync::Arc<tokio::sync::
     Ok(session_manager)
 }
 
-/// エラーハンドリング用ヘルパー
-fn setup_error_handling() {
-    std::panic::set_hook(Box::new(|panic_info| {
-        eprintln!("💥 ccmonitor panic: {}", panic_info);
-        eprintln!("🔧 Please report this issue with the above information");
-    }));
-}
 
 /// 使用方法ヘルプ
 #[allow(dead_code)]

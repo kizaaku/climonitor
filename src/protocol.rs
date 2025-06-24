@@ -2,36 +2,34 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// セッション状態
+/// セッション状態（ccmanager風のシンプルな4状態）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SessionStatus {
-    Active,    // 🟢 作業中
-    Approve,   // 🟡 承認待ち
-    Finish,    // 🔵 完了
-    Error,     // 🔴 エラー
-    Idle,      // ⚪ アイドル
+    Busy,         // 🟢 実行中
+    WaitingInput, // 🟡 確認待ち
+    Idle,         // 🔵 完了/アイドル
+    Error,        // 🔴 エラー
 }
 
 impl SessionStatus {
     pub fn icon(&self) -> &'static str {
         match self {
-            Self::Active => "🟢",
-            Self::Approve => "🟡", 
-            Self::Finish => "🔵",
+            Self::Busy => "🟢",
+            Self::WaitingInput => "🟡", 
+            Self::Idle => "🔵",
             Self::Error => "🔴",
-            Self::Idle => "⚪",
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Active => "作業中",
-            Self::Approve => "承認待ち",
-            Self::Finish => "完了",
+            Self::Busy => "実行中",
+            Self::WaitingInput => "確認待ち",
+            Self::Idle => "完了",
             Self::Error => "エラー",
-            Self::Idle => "アイドル",
         }
     }
+    
 }
 
 /// launcher → monitor へのメッセージ
@@ -148,12 +146,3 @@ pub fn generate_connection_id() -> String {
     format!("launcher-{:x}", timestamp)
 }
 
-/// セッションID生成
-pub fn generate_session_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    format!("session-{:x}", timestamp)
-}

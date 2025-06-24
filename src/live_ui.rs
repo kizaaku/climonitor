@@ -189,27 +189,6 @@ impl LiveUI {
         }
     }
 
-    /// 統計サマリー描画（デバッグ用）
-    pub async fn render_debug_stats(&self) {
-        if !self.verbose {
-            return;
-        }
-
-        println!("🔧 Debug Information:");
-        
-        let session_manager = self.session_manager.read().await;
-        let stats = session_manager.get_stats();
-        
-        println!("  Active Launchers: {}", stats.active_launchers);
-        println!("  Total Sessions: {}", stats.total_sessions);
-        println!("  Active Sessions: {}", stats.active_sessions);
-        
-        // メモリ使用量など
-        let memory_usage = get_memory_usage();
-        println!("  Memory Usage: ~{}MB", memory_usage);
-        
-        println!();
-    }
 }
 
 /// 時間経過フォーマット
@@ -228,30 +207,6 @@ fn format_duration_since(time: DateTime<Utc>) -> String {
     }
 }
 
-/// メモリ使用量取得（大雑把）
-fn get_memory_usage() -> u64 {
-    // 簡易版：実際のメモリ使用量取得は複雑
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        
-        let output = Command::new("ps")
-            .args(&["-o", "rss", "-p", &std::process::id().to_string()])
-            .output();
-            
-        if let Ok(output) = output {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            let lines: Vec<&str> = output_str.trim().split('\n').collect();
-            if lines.len() >= 2 {
-                if let Ok(rss_kb) = lines[1].trim().parse::<u64>() {
-                    return rss_kb / 1024; // KB to MB
-                }
-            }
-        }
-    }
-    
-    0 // フォールバック
-}
 
 /// 非インタラクティブ表示（--no-tui相当）
 pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbose: bool) {
@@ -322,10 +277,4 @@ mod tests {
         assert!(format_duration_since(time).contains("h ago"));
     }
 
-    #[test]
-    fn test_memory_usage() {
-        let usage = get_memory_usage();
-        // メモリ使用量は0以上であるべき（実装依存）
-        assert!(usage >= 0);
-    }
 }
