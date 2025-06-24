@@ -1,3 +1,4 @@
+pub mod ansi_utils;
 pub mod claude_wrapper;
 pub mod launcher_client;
 pub mod live_ui;

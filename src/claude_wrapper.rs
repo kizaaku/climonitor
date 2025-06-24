@@ -1,8 +1,8 @@
 use anyhow::Result;
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::process::Stdio;
+use terminal_size::{terminal_size, Height, Width};
 use tokio::process::{Child, Command};
-use portable_pty::{native_pty_system, PtySize, CommandBuilder};
-use terminal_size::{Width, Height, terminal_size};
 
 /// Claude実行ラッパー
 pub struct ClaudeWrapper {
@@ -39,51 +39,92 @@ impl ClaudeWrapper {
     pub async fn spawn(&self) -> Result<Child> {
         let mut cmd = Command::new("claude");
         cmd.args(&self.args);
-        
+
         if let Some(working_dir) = &self.working_dir {
             cmd.current_dir(working_dir);
         }
-        
+
         cmd.stdout(Stdio::piped())
-           .stderr(Stdio::piped())
-           .stdin(Stdio::inherit());
-        
+            .stderr(Stdio::piped())
+            .stdin(Stdio::inherit());
+
         let child = cmd.spawn()?;
         Ok(child)
     }
 
     /// Claude プロセスをPTYで起動（TTY環境を提供）
-    pub fn spawn_with_pty(&self) -> Result<(Box<dyn portable_pty::Child + Send + Sync>, Box<dyn portable_pty::MasterPty + Send>)> {
+    pub fn spawn_with_pty(
+        &self,
+    ) -> Result<(
+        Box<dyn portable_pty::Child + Send + Sync>,
+        Box<dyn portable_pty::MasterPty + Send>,
+    )> {
         let pty_system = native_pty_system();
-        
+
         // 実際の端末サイズを取得
         let (cols, rows) = if let Some((Width(w), Height(h))) = terminal_size() {
             (w, h)
         } else {
             (80, 24) // フォールバック
         };
-        
+
         // PTYペアを作成
-        let pty_pair = pty_system.openpty(PtySize {
+        let mut pty_pair = pty_system.openpty(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        
+
+        // Rawモードを設定（端末の入力処理を改善）
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            if let Some(fd) = pty_pair.master.as_raw_fd() {
+                unsafe {
+                    let mut termios: libc::termios = std::mem::zeroed();
+                    if libc::tcgetattr(fd, &mut termios) == 0 {
+                        // ローカルエコーを無効化（重複入力を防ぐ）
+                        termios.c_lflag &= !(libc::ECHO | libc::ECHONL);
+                        // カノニカルモードを有効化（行単位の入力処理）
+                        termios.c_lflag |= libc::ICANON;
+                        // 設定を適用
+                        libc::tcsetattr(fd, libc::TCSANOW, &termios);
+                    }
+                }
+            }
+        }
+
         // Claudeコマンドを構築
         let mut cmd = CommandBuilder::new("claude");
         cmd.args(&self.args);
-        
+
         // 作業ディレクトリを設定（指定がない場合は現在のディレクトリ）
-        let working_dir = self.working_dir.as_ref()
+        let working_dir = self
+            .working_dir
+            .as_ref()
             .map(|p| p.clone())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
         cmd.cwd(working_dir);
-        
+
+        // // 環境変数を設定してClaude Codeが適切にPTYを認識できるようにする
+        // cmd.env("TERM", "xterm-256color");
+        // cmd.env("COLORTERM", "truecolor");
+        // cmd.env("FORCE_COLOR", "1");
+
+        // // TTY環境であることを明示
+        // if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
+        //     cmd.env("TERM_PROGRAM", term_program);
+        // }
+
+        // // デバッグログを有効化
+        //cmd.env("ANTHROPIC_LOG", "debug");
+
         // PTYスレーブでClaudeを起動
         let child = pty_pair.slave.spawn_command(cmd)?;
-        
+
         Ok((child, pty_pair.master))
     }
 
@@ -91,21 +132,21 @@ impl ClaudeWrapper {
     pub async fn run_directly(&self) -> Result<()> {
         let mut cmd = Command::new("claude");
         cmd.args(&self.args);
-        
+
         if let Some(working_dir) = &self.working_dir {
             cmd.current_dir(working_dir);
         }
-        
+
         cmd.stdin(Stdio::inherit())
-           .stdout(Stdio::inherit())
-           .stderr(Stdio::inherit());
-        
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
         let status = cmd.status().await?;
-        
+
         if !status.success() {
             return Err(anyhow::anyhow!("Claude exited with status: {}", status));
         }
-        
+
         Ok(())
     }
 
@@ -117,7 +158,7 @@ impl ClaudeWrapper {
                 return Some(project_name.clone());
             }
         }
-        
+
         // 作業ディレクトリ名から推測
         if let Some(working_dir) = &self.working_dir {
             if let Some(dir_name) = working_dir.file_name() {
@@ -126,7 +167,7 @@ impl ClaudeWrapper {
                 }
             }
         }
-        
+
         // 現在のディレクトリ名から推測
         if let Ok(current_dir) = std::env::current_dir() {
             if let Some(dir_name) = current_dir.file_name() {
@@ -135,7 +176,7 @@ impl ClaudeWrapper {
                 }
             }
         }
-        
+
         None
     }
 

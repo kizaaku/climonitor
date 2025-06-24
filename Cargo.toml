@@ -38,5 +38,6 @@ regex = "1.10"
 portable-pty = "0.8"
 terminal_size = "0.3"
 signal-hook = "0.3"
+libc = "0.2"
 
 [dev-dependencies]

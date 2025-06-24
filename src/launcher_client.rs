@@ -404,7 +404,20 @@ impl LauncherClient {
         });
 
         let stdin_to_pty = tokio::spawn(async move {
-            Self::handle_stdin_to_pty(pty_writer, verbose).await;
+            // インタラクティブターミナルかどうかチェック
+            let is_interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+            
+            if is_interactive {
+                if verbose {
+                    println!("📝 [pty] Using raw input mode for interactive terminal");
+                }
+                Self::handle_stdin_to_pty_raw(pty_writer, verbose).await;
+            } else {
+                if verbose {
+                    println!("📝 [pty] Using standard input mode for non-interactive input");
+                }
+                Self::handle_stdin_to_pty(pty_writer, verbose).await;
+            }
         });
 
         // どちらかのタスクが終了したら両方終了
@@ -493,54 +506,153 @@ impl LauncherClient {
         }
     }
 
-    /// stdin → PTY 転送処理
+    /// stdin → PTY 転送処理（UTF-8マルチバイト文字対応）
     async fn handle_stdin_to_pty(
         pty_writer: Box<dyn std::io::Write + Send>,
         verbose: bool,
     ) {
-        use tokio::io::{AsyncBufReadExt, BufReader};
+        use tokio::io::{AsyncReadExt};
         use std::sync::{Arc, Mutex};
+        use std::io::{self, IsTerminal};
         
         let pty_writer = Arc::new(Mutex::new(pty_writer));
-        let stdin = tokio::io::stdin();
-        let mut reader = BufReader::new(stdin);
-        let mut input_buffer = Vec::new();
+        
+        // ターミナルがTTYかどうかを確認
+        if verbose {
+            println!("📝 [stdin→pty] TTY check: stdin={}, stdout={}, stderr={}", 
+                io::stdin().is_terminal(),
+                io::stdout().is_terminal(), 
+                io::stderr().is_terminal()
+            );
+        }
+        
+        let mut stdin = tokio::io::stdin();
+        let mut buffer = [0u8; 1024];
+        let mut byte_buffer = Vec::new(); // バイトレベルでのバッファリング
+
+        if verbose {
+            println!("📝 [stdin→pty] Starting input reading loop");
+        }
 
         loop {
-            input_buffer.clear();
-            
-            match reader.read_until(b'\n', &mut input_buffer).await {
+            if verbose {
+                println!("📝 [stdin→pty] Waiting for stdin input...");
+            }
+            match stdin.read(&mut buffer).await {
                 Ok(0) => break, // EOF
-                Ok(_) => {
-                    let input = String::from_utf8_lossy(&input_buffer);
+                Ok(n) => {
+                    // 読み取ったバイトを累積バッファに追加
+                    byte_buffer.extend_from_slice(&buffer[..n]);
                     
-                    if verbose {
-                        println!("📝 [stdin→pty] {}", input.trim());
+                    // UTF-8文字境界を見つけて処理
+                    let mut processed_bytes = 0;
+                    
+                    while processed_bytes < byte_buffer.len() {
+                        // 残りのバイトでUTF-8文字の開始を探す
+                        let remaining = &byte_buffer[processed_bytes..];
+                        
+                        // UTF-8文字として有効な最大長を見つける
+                        match std::str::from_utf8(remaining) {
+                            Ok(valid_str) => {
+                                // 全て有効なUTF-8文字列
+                                if !valid_str.is_empty() {
+                                    if verbose {
+                                        // 制御文字を可視化して表示
+                                        let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
+                                        println!("📝 [stdin→pty] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
+                                    }
+
+                                    // PTYに書き込み
+                                    let result = tokio::task::spawn_blocking({
+                                        let pty_writer = pty_writer.clone();
+                                        let input = valid_str.to_string();
+                                        move || {
+                                            use std::io::Write;
+                                            let mut writer = pty_writer.lock().unwrap();
+                                            writer.write_all(input.as_bytes())?;
+                                            writer.flush()?;
+                                            Ok::<(), std::io::Error>(())
+                                        }
+                                    }).await;
+
+                                    if let Err(e) = result {
+                                        if verbose {
+                                            eprintln!("📡 Spawn blocking error for stdin write: {}", e);
+                                        }
+                                        break;
+                                    } else if let Err(e) = result.unwrap() {
+                                        if verbose {
+                                            eprintln!("📡 Write error to PTY: {}", e);
+                                        }
+                                        break;
+                                    }
+                                }
+                                
+                                // 全体を処理完了
+                                processed_bytes = byte_buffer.len();
+                                break;
+                            }
+                            Err(utf8_error) => {
+                                // 一部だけ有効、または不完全なUTF-8シーケンス
+                                let valid_up_to = utf8_error.valid_up_to();
+                                
+                                if valid_up_to > 0 {
+                                    // 有効な部分を処理
+                                    let valid_part = &remaining[..valid_up_to];
+                                    if let Ok(valid_str) = std::str::from_utf8(valid_part) {
+                                        if !valid_str.is_empty() {
+                                            if verbose {
+                                                let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
+                                                println!("📝 [stdin→pty] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
+                                            }
+
+                                            // 有効部分をPTYに書き込み
+                                            let result = tokio::task::spawn_blocking({
+                                                let pty_writer = pty_writer.clone();
+                                                let input = valid_str.to_string();
+                                                move || {
+                                                    use std::io::Write;
+                                                    let mut writer = pty_writer.lock().unwrap();
+                                                    writer.write_all(input.as_bytes())?;
+                                                    writer.flush()?;
+                                                    Ok::<(), std::io::Error>(())
+                                                }
+                                            }).await;
+
+                                            if let Err(e) = result {
+                                                if verbose {
+                                                    eprintln!("📡 Spawn blocking error for stdin write: {}", e);
+                                                }
+                                                break;
+                                            } else if let Err(e) = result.unwrap() {
+                                                if verbose {
+                                                    eprintln!("📡 Write error to PTY: {}", e);
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    processed_bytes += valid_up_to;
+                                } else {
+                                    // 最初から無効 - 不完全なUTF-8シーケンスの可能性
+                                    // 次の読み取りを待つためにループを抜ける
+                                    break;
+                                }
+                            }
+                        }
                     }
-
-                    // PTYに書き込み
-                    let result = tokio::task::spawn_blocking({
-                        let pty_writer = pty_writer.clone();
-                        let input = input.to_string();
-                        move || {
-                            use std::io::Write;
-                            let mut writer = pty_writer.lock().unwrap();
-                            writer.write_all(input.as_bytes())?;
-                            writer.flush()?;
-                            Ok::<(), std::io::Error>(())
-                        }
-                    }).await;
-
-                    if let Err(e) = result {
+                    
+                    // 処理済みバイトをバッファから削除
+                    if processed_bytes > 0 {
+                        byte_buffer.drain(..processed_bytes);
+                    }
+                    
+                    // バッファが大きくなりすぎた場合のガード（無効なデータの蓄積を防ぐ）
+                    if byte_buffer.len() > 16 {
                         if verbose {
-                            eprintln!("📡 Spawn blocking error for stdin write: {}", e);
+                            eprintln!("⚠️  Clearing input buffer due to invalid UTF-8 sequence");
                         }
-                        break;
-                    } else if let Err(e) = result.unwrap() {
-                        if verbose {
-                            eprintln!("📡 Write error to PTY: {}", e);
-                        }
-                        break;
+                        byte_buffer.clear();
                     }
                 }
                 Err(e) => {
@@ -548,6 +660,235 @@ impl LauncherClient {
                         eprintln!("📡 Read error from stdin: {}", e);
                     }
                     break;
+                }
+            }
+        }
+    }
+
+    /// stdin → PTY 転送処理（Rawモード - 直接ターミナル入力）
+    async fn handle_stdin_to_pty_raw(
+        pty_writer: Box<dyn std::io::Write + Send>,
+        verbose: bool,
+    ) {
+        use std::sync::{Arc, Mutex};
+        use std::io::Read;
+        
+        let pty_writer = Arc::new(Mutex::new(pty_writer));
+        let mut buffer = [0u8; 1024];
+        let mut byte_buffer = Vec::new();
+
+        if verbose {
+            println!("📝 [stdin→pty-raw] Starting raw input reading loop with terminal control");
+        }
+
+        // ターミナルをRAWモードに設定
+        #[cfg(unix)]
+        let original_termios = unsafe {
+            let mut termios: libc::termios = std::mem::zeroed();
+            let mut original_termios: Option<libc::termios> = None;
+            
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+                original_termios = Some(termios);
+                
+                // RAWモード設定: 入力の即座処理とエコー無効化
+                termios.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ECHONL | libc::ISIG);
+                termios.c_iflag &= !(libc::ICRNL | libc::INLCR | libc::IXON | libc::IXOFF);
+                termios.c_oflag &= !libc::OPOST;
+                termios.c_cc[libc::VMIN] = 1;  // 最小読み取り文字数
+                termios.c_cc[libc::VTIME] = 0; // タイムアウト無効
+                
+                if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) == 0 {
+                    if verbose {
+                        println!("📝 [stdin→pty-raw] Terminal set to raw mode");
+                    }
+                } else {
+                    if verbose {
+                        eprintln!("⚠️  Failed to set terminal raw mode");
+                    }
+                }
+            } else {
+                if verbose {
+                    eprintln!("⚠️  Failed to get terminal attributes");
+                }
+            }
+            
+            original_termios
+        };
+        
+        #[cfg(not(unix))]
+        let original_termios: Option<()> = None;
+
+        loop {
+            // 直接標準入力からバイトを読み取り
+            let result = tokio::task::spawn_blocking(move || {
+                let mut stdin = std::io::stdin();
+                match stdin.read(&mut buffer) {
+                    Ok(n) => Ok((n, buffer.to_vec())),
+                    Err(e) => Err(e),
+                }
+            }).await;
+
+            match result {
+                Ok(Ok((0, _))) => break, // EOF
+                Ok(Ok((n, read_buffer))) => {
+                    // 読み取ったバイトを累積バッファに追加
+                    byte_buffer.extend_from_slice(&read_buffer[..n]);
+                    
+                    if verbose {
+                        // エスケープシーケンスを可視化
+                        let mut debug_str = String::new();
+                        for &byte in &read_buffer[..n] {
+                            match byte {
+                                27 => debug_str.push_str("ESC"),
+                                10 => debug_str.push_str("\\n"),
+                                13 => debug_str.push_str("\\r"),
+                                9 => debug_str.push_str("\\t"),
+                                91 => debug_str.push_str("["),
+                                65..=90 | 97..=122 => debug_str.push(byte as char),
+                                _ if byte >= 32 && byte <= 126 => debug_str.push(byte as char),
+                                _ => debug_str.push_str(&format!("\\x{:02x}", byte)),
+                            }
+                        }
+                        println!("📝 [stdin→pty-raw] Read {} bytes: [{}] raw: {:?}", n, debug_str, &read_buffer[..n]);
+                    }
+                    
+                    // UTF-8文字境界を見つけて処理
+                    let mut processed_bytes = 0;
+                    
+                    while processed_bytes < byte_buffer.len() {
+                        // 残りのバイトでUTF-8文字の開始を探す
+                        let remaining = &byte_buffer[processed_bytes..];
+                        
+                        // UTF-8文字として有効な最大長を見つける
+                        match std::str::from_utf8(remaining) {
+                            Ok(valid_str) => {
+                                // 全て有効なUTF-8文字列
+                                if !valid_str.is_empty() {
+                                    if verbose {
+                                        let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
+                                        println!("📝 [stdin→pty-raw] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
+                                    }
+
+                                    // PTYに書き込み
+                                    let result = tokio::task::spawn_blocking({
+                                        let pty_writer = pty_writer.clone();
+                                        let input = valid_str.to_string();
+                                        move || {
+                                            use std::io::Write;
+                                            let mut writer = pty_writer.lock().unwrap();
+                                            writer.write_all(input.as_bytes())?;
+                                            writer.flush()?;
+                                            Ok::<(), std::io::Error>(())
+                                        }
+                                    }).await;
+
+                                    if let Err(e) = result {
+                                        if verbose {
+                                            eprintln!("📡 Spawn blocking error for stdin write: {}", e);
+                                        }
+                                        break;
+                                    } else if let Err(e) = result.unwrap() {
+                                        if verbose {
+                                            eprintln!("📡 Write error to PTY: {}", e);
+                                        }
+                                        break;
+                                    }
+                                }
+                                
+                                // 全体を処理完了
+                                processed_bytes = byte_buffer.len();
+                                break;
+                            }
+                            Err(utf8_error) => {
+                                // 一部だけ有効、または不完全なUTF-8シーケンス
+                                let valid_up_to = utf8_error.valid_up_to();
+                                
+                                if valid_up_to > 0 {
+                                    // 有効な部分を処理
+                                    let valid_part = &remaining[..valid_up_to];
+                                    if let Ok(valid_str) = std::str::from_utf8(valid_part) {
+                                        if !valid_str.is_empty() {
+                                            if verbose {
+                                                let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
+                                                println!("📝 [stdin→pty-raw] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
+                                            }
+
+                                            // 有効部分をPTYに書き込み
+                                            let result = tokio::task::spawn_blocking({
+                                                let pty_writer = pty_writer.clone();
+                                                let input = valid_str.to_string();
+                                                move || {
+                                                    use std::io::Write;
+                                                    let mut writer = pty_writer.lock().unwrap();
+                                                    writer.write_all(input.as_bytes())?;
+                                                    writer.flush()?;
+                                                    Ok::<(), std::io::Error>(())
+                                                }
+                                            }).await;
+
+                                            if let Err(e) = result {
+                                                if verbose {
+                                                    eprintln!("📡 Spawn blocking error for stdin write: {}", e);
+                                                }
+                                                break;
+                                            } else if let Err(e) = result.unwrap() {
+                                                if verbose {
+                                                    eprintln!("📡 Write error to PTY: {}", e);
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    processed_bytes += valid_up_to;
+                                } else {
+                                    // 最初から無効 - 不完全なUTF-8シーケンスの可能性
+                                    // 次の読み取りを待つためにループを抜ける
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 処理済みバイトをバッファから削除
+                    if processed_bytes > 0 {
+                        byte_buffer.drain(..processed_bytes);
+                    }
+                    
+                    // バッファが大きくなりすぎた場合のガード（無効なデータの蓄積を防ぐ）
+                    if byte_buffer.len() > 16 {
+                        if verbose {
+                            eprintln!("⚠️  Clearing input buffer due to invalid UTF-8 sequence");
+                        }
+                        byte_buffer.clear();
+                    }
+                }
+                Ok(Err(e)) => {
+                    if verbose {
+                        eprintln!("📡 Read error from stdin: {}", e);
+                    }
+                    break;
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("📡 Spawn blocking error: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // ターミナル設定を復元
+        #[cfg(unix)]
+        if let Some(original) = original_termios {
+            unsafe {
+                if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &original) == 0 {
+                    if verbose {
+                        println!("📝 [stdin→pty-raw] Terminal settings restored");
+                    }
+                } else {
+                    if verbose {
+                        eprintln!("⚠️  Failed to restore terminal settings");
+                    }
                 }
             }
         }

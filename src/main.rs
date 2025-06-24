@@ -1,5 +1,6 @@
 use clap::Parser;
 
+mod ansi_utils;
 mod claude_wrapper;
 mod launcher_client;
 mod live_ui;

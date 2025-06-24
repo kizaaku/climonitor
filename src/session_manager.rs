@@ -87,7 +87,8 @@ impl SessionManager {
             }
 
             LauncherToMonitor::StateUpdate { 
-                session_id, status, confidence, evidence, message, timestamp 
+                session_id, status, confidence, evidence, message, 
+                launcher_context, usage_reset_time, is_waiting_for_execution, timestamp 
             } => {
                 let session = SessionInfo {
                     id: session_id.clone(),
@@ -98,6 +99,9 @@ impl SessionManager {
                     confidence,
                     evidence,
                     last_message: message,
+                    launcher_context,
+                    usage_reset_time,
+                    is_waiting_for_execution,
                     created_at: self.sessions.get(&session_id)
                         .map(|s| s.created_at)
                         .unwrap_or(timestamp),

@@ -50,6 +50,9 @@ pub enum LauncherToMonitor {
         confidence: f32,      // 推測の信頼度 (0.0-1.0)
         evidence: Vec<String>, // 判定根拠
         message: Option<String>, // 最新メッセージ
+        launcher_context: Option<String>, // launcherコンテキスト
+        usage_reset_time: Option<String>, // 使用制限リセット時刻
+        is_waiting_for_execution: bool, // 実行待ち状態
         timestamp: DateTime<Utc>,
     },
     /// プロセス監視情報
@@ -123,6 +126,9 @@ pub struct SessionInfo {
     pub last_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
+    pub launcher_context: Option<String>,
+    pub usage_reset_time: Option<String>,
+    pub is_waiting_for_execution: bool,
 }
 
 /// プロセス監視データ

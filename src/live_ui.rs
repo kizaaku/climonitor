@@ -157,12 +157,28 @@ impl LiveUI {
                     String::new()
                 };
 
-                println!("    {} {} {} | {}{}", 
+                // Show launcher context if available (first few chars)
+                let context_display = if let Some(ref context) = session.launcher_context {
+                    let short_context = truncate_str(context, 8);
+                    format!(" [{}]", short_context)
+                } else {
+                    String::new()
+                };
+                
+                let execution_indicator = if session.is_waiting_for_execution {
+                    " ⏳"
+                } else {
+                    ""
+                };
+
+                println!("    {} {}{} {} | {}{}{}", 
                     status_icon,
                     status_label,
+                    execution_indicator,
                     truncate_str(&session.id, 12),
                     elapsed,
-                    confidence_str
+                    confidence_str,
+                    context_display
                 );
 
                 // 最新メッセージ表示
@@ -171,9 +187,20 @@ impl LiveUI {
                     println!("      💬 {}", preview);
                 }
 
+                // Usage reset time display
+                if let Some(ref reset_time) = session.usage_reset_time {
+                    println!("      ⏰ Usage resets at: {}", reset_time);
+                }
+                
                 // 詳細情報（verbose モード）
                 if self.verbose && !session.evidence.is_empty() {
                     println!("      🔍 Evidence: {}", session.evidence.join(", "));
+                }
+                
+                if self.verbose {
+                    if let Some(ref context) = session.launcher_context {
+                        println!("      📝 Context: {}", truncate_str(context, 50));
+                    }
                 }
             }
             println!();
