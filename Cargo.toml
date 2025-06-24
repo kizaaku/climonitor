@@ -35,6 +35,8 @@ unicode-segmentation = "1.10"
 # Temporary file utilities removed for Phase 3
 # tempfile = "3.8"
 regex = "1.10"
-# pty-process = { version = "0.4", features = ["async"] }
+portable-pty = "0.8"
+terminal_size = "0.3"
+signal-hook = "0.3"
 
 [dev-dependencies]

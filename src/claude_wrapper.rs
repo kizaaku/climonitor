@@ -1,6 +1,8 @@
 use anyhow::Result;
 use std::process::Stdio;
 use tokio::process::{Child, Command};
+use portable_pty::{native_pty_system, PtySize, CommandBuilder};
+use terminal_size::{Width, Height, terminal_size};
 
 /// Claude実行ラッパー
 pub struct ClaudeWrapper {
@@ -33,7 +35,7 @@ impl ClaudeWrapper {
         self.working_dir.as_ref()
     }
 
-    /// Claude プロセスを起動
+    /// Claude プロセスを起動（従来のパイプベース）
     pub async fn spawn(&self) -> Result<Child> {
         let mut cmd = Command::new("claude");
         cmd.args(&self.args);
@@ -48,6 +50,41 @@ impl ClaudeWrapper {
         
         let child = cmd.spawn()?;
         Ok(child)
+    }
+
+    /// Claude プロセスをPTYで起動（TTY環境を提供）
+    pub fn spawn_with_pty(&self) -> Result<(Box<dyn portable_pty::Child + Send + Sync>, Box<dyn portable_pty::MasterPty + Send>)> {
+        let pty_system = native_pty_system();
+        
+        // 実際の端末サイズを取得
+        let (cols, rows) = if let Some((Width(w), Height(h))) = terminal_size() {
+            (w, h)
+        } else {
+            (80, 24) // フォールバック
+        };
+        
+        // PTYペアを作成
+        let pty_pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+        
+        // Claudeコマンドを構築
+        let mut cmd = CommandBuilder::new("claude");
+        cmd.args(&self.args);
+        
+        // 作業ディレクトリを設定（指定がない場合は現在のディレクトリ）
+        let working_dir = self.working_dir.as_ref()
+            .map(|p| p.clone())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+        cmd.cwd(working_dir);
+        
+        // PTYスレーブでClaudeを起動
+        let child = pty_pair.slave.spawn_command(cmd)?;
+        
+        Ok((child, pty_pair.master))
     }
 
     /// Claude を直接実行（パススルー）

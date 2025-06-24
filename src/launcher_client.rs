@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
+use portable_pty::MasterPty;
+
+use crate::ansi_utils::clean_for_logging;
 
 use crate::claude_wrapper::ClaudeWrapper;
 use crate::monitor_server::MonitorServer;
@@ -44,6 +47,11 @@ impl LauncherClient {
             verbose,
             log_file: None,
         }
+    }
+
+    /// ログファイルを設定
+    pub fn set_log_file(&mut self, log_file: Option<PathBuf>) {
+        self.log_file = log_file;
     }
 
     /// Monitor サーバーに接続
@@ -146,32 +154,12 @@ impl LauncherClient {
             return self.claude_wrapper.run_directly().await;
         }
 
-        // 対話モード検出（引数なしまたは--printなし）
-        let is_interactive = self.is_interactive_mode();
-        if is_interactive {
-            if self.verbose {
-                if self.log_file.is_some() {
-                    println!("🔄 Interactive mode detected, running with log-only monitoring");
-                } else {
-                    println!("🔄 Interactive mode detected, running without monitoring");
-                }
-            }
-            
-            // ログファイルが設定されている場合は軽量監視モードで実行
-            if self.log_file.is_some() {
-                return self.run_claude_with_log_only().await;
-            } else {
-                return self.claude_wrapper.run_directly().await;
-            }
-        }
+        // Claude プロセス起動（PTYを使用してTTY環境を提供）
+        let (mut claude_process, pty_master) = self.claude_wrapper.spawn_with_pty()?;
+        // Note: std::process::Child は set_process に渡せないため、プロセス監視は省略
 
-        // Claude プロセス起動（非対話モードのみ監視）
-        let mut claude_process = self.claude_wrapper.spawn().await?;
-        self.process_monitor.set_process(&claude_process);
-
-        // 標準出力・エラー出力の監視開始
-        let stdout_handle = self.start_stdout_monitoring(&mut claude_process).await?;
-        let stderr_handle = self.start_stderr_monitoring(&mut claude_process).await?;
+        // PTYベースの双方向I/O開始
+        let pty_handle = self.start_pty_bidirectional_io(pty_master).await?;
 
         // プロセス監視開始
         let process_handle = self.start_process_monitoring().await;
@@ -180,16 +168,17 @@ impl LauncherClient {
             println!("👀 Monitoring started for Claude process");
         }
 
-        // Claude プロセスの終了を待つ
-        let exit_status = claude_process.wait().await?;
+        // Claude プロセスの終了を待つ（portable_pty::Child なので tokio::task::spawn_blocking を使用）
+        let exit_status = tokio::task::spawn_blocking(move || {
+            claude_process.wait()
+        }).await??;
 
         if self.verbose {
             println!("🏁 Claude process exited with status: {:?}", exit_status);
         }
 
         // 監視タスクを終了
-        stdout_handle.abort();
-        stderr_handle.abort();
+        pty_handle.abort();
         process_handle.abort();
 
         // 切断メッセージ送信
@@ -302,9 +291,10 @@ impl LauncherClient {
                         println!("📝 [{}] {}", stream_name, line);
                     }
 
-                    // ログファイルに書き込み（stdout のみ）
+                    // ログファイルに書き込み（stdout のみ、ANSI エスケープシーケンスをクリーンアップ）
                     if let Some(ref mut writer) = log_writer {
-                        let log_line = format!("{}\n", line);
+                        let clean_line = clean_for_logging(line);
+                        let log_line = format!("{}\n", clean_line);
                         if let Err(e) = writer.write_all(log_line.as_bytes()).await {
                             if verbose {
                                 eprintln!("⚠️  Failed to write to log file: {}", e);
@@ -324,6 +314,238 @@ impl LauncherClient {
                 Err(e) => {
                     if verbose {
                         eprintln!("📡 Read error from {}: {}", stream_name, e);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// PTY 双方向I/Oタスク開始
+    async fn start_pty_bidirectional_io(&self, pty_master: Box<dyn MasterPty + Send>) -> Result<JoinHandle<()>> {
+        let launcher_id = self.launcher_id.clone();
+        let session_id = self.session_id.clone();
+        let verbose = self.verbose;
+        let log_file = self.log_file.clone();
+
+        let handle = tokio::spawn(async move {
+            Self::handle_pty_bidirectional_io(
+                pty_master,
+                launcher_id,
+                session_id,
+                verbose,
+                log_file,
+            ).await;
+        });
+
+        Ok(handle)
+    }
+
+    /// PTY 双方向I/O処理（stdin → PTY, PTY → stdout + log）
+    async fn handle_pty_bidirectional_io(
+        pty_master: Box<dyn MasterPty + Send>,
+        _launcher_id: String,
+        _session_id: String,
+        verbose: bool,
+        log_file: Option<PathBuf>,
+    ) {
+        let analyzer = StandardAnalyzer::new();
+
+        // ログファイルを開く
+        let log_writer = if let Some(ref log_path) = log_file {
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .await
+            {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    if verbose {
+                        eprintln!("⚠️  Failed to open log file {}: {}", log_path.display(), e);
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // PTY writer を一度だけ取得（take_writer は一度しか呼べない）
+        let pty_writer = match pty_master.take_writer() {
+            Ok(writer) => writer,
+            Err(e) => {
+                if verbose {
+                    eprintln!("⚠️  Failed to get PTY writer: {}", e);
+                }
+                return;
+            }
+        };
+
+        // PTY reader を取得
+        let pty_reader = match pty_master.try_clone_reader() {
+            Ok(reader) => reader,
+            Err(e) => {
+                if verbose {
+                    eprintln!("⚠️  Failed to get PTY reader: {}", e);
+                }
+                return;
+            }
+        };
+
+        // 双方向I/Oタスクを起動
+        let pty_to_stdout = tokio::spawn(async move {
+            Self::handle_pty_to_stdout(
+                pty_reader,
+                verbose,
+                log_writer,
+                analyzer,
+            ).await;
+        });
+
+        let stdin_to_pty = tokio::spawn(async move {
+            Self::handle_stdin_to_pty(pty_writer, verbose).await;
+        });
+
+        // どちらかのタスクが終了したら両方終了
+        tokio::select! {
+            _ = pty_to_stdout => {
+                if verbose {
+                    println!("📡 PTY to stdout task ended");
+                }
+            }
+            _ = stdin_to_pty => {
+                if verbose {
+                    println!("📡 Stdin to PTY task ended");
+                }
+            }
+        }
+    }
+
+    /// PTY → stdout + log 転送処理
+    async fn handle_pty_to_stdout(
+        pty_reader: Box<dyn std::io::Read + Send>,
+        verbose: bool,
+        mut log_writer: Option<tokio::fs::File>,
+        mut analyzer: StandardAnalyzer,
+    ) {
+        use std::sync::{Arc, Mutex};
+        let pty_reader = Arc::new(Mutex::new(pty_reader));
+        
+        loop {
+            let mut buffer = [0u8; 4096];
+            let result = tokio::task::spawn_blocking({
+                let pty_reader = pty_reader.clone();
+                move || {
+                    use std::io::Read;
+                    let mut reader = pty_reader.lock().unwrap();
+                    let bytes_read = reader.read(&mut buffer)?;
+                    Ok::<(Vec<u8>, usize), std::io::Error>((buffer.to_vec(), bytes_read))
+                }
+            }).await;
+
+            match result {
+                Ok(Ok((_buffer_data, 0))) => break, // EOF
+                Ok(Ok((buffer_data, n))) => {
+                    let output = String::from_utf8_lossy(&buffer_data[..n]);
+                    
+                    // ユーザーには通常通り出力表示
+                    print!("{}", output);
+                    use std::io::Write;
+                    std::io::stdout().flush().unwrap();
+
+                    if verbose {
+                        println!("📝 [pty→stdout] {}", output.trim());
+                    }
+
+                    // ログファイルに書き込み（クリーンアップ済み）
+                    if let Some(ref mut writer) = log_writer {
+                        let clean_output = clean_for_logging(&output);
+                        if let Err(e) = writer.write_all(clean_output.as_bytes()).await {
+                            if verbose {
+                                eprintln!("⚠️  Failed to write to log file: {}", e);
+                            }
+                        } else {
+                            // フラッシュして確実に書き込み
+                            let _ = writer.flush().await;
+                        }
+                    }
+
+                    // 出力を解析
+                    let _analysis = analyzer.analyze_output(&output, "pty");
+                    
+                    // TODO: Monitor に送信
+                    // このセクションは後で実装
+                }
+                Ok(Err(e)) => {
+                    if verbose {
+                        eprintln!("📡 Read error from PTY: {}", e);
+                    }
+                    break;
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("📡 Spawn blocking error: {}", e);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// stdin → PTY 転送処理
+    async fn handle_stdin_to_pty(
+        pty_writer: Box<dyn std::io::Write + Send>,
+        verbose: bool,
+    ) {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        use std::sync::{Arc, Mutex};
+        
+        let pty_writer = Arc::new(Mutex::new(pty_writer));
+        let stdin = tokio::io::stdin();
+        let mut reader = BufReader::new(stdin);
+        let mut input_buffer = Vec::new();
+
+        loop {
+            input_buffer.clear();
+            
+            match reader.read_until(b'\n', &mut input_buffer).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let input = String::from_utf8_lossy(&input_buffer);
+                    
+                    if verbose {
+                        println!("📝 [stdin→pty] {}", input.trim());
+                    }
+
+                    // PTYに書き込み
+                    let result = tokio::task::spawn_blocking({
+                        let pty_writer = pty_writer.clone();
+                        let input = input.to_string();
+                        move || {
+                            use std::io::Write;
+                            let mut writer = pty_writer.lock().unwrap();
+                            writer.write_all(input.as_bytes())?;
+                            writer.flush()?;
+                            Ok::<(), std::io::Error>(())
+                        }
+                    }).await;
+
+                    if let Err(e) = result {
+                        if verbose {
+                            eprintln!("📡 Spawn blocking error for stdin write: {}", e);
+                        }
+                        break;
+                    } else if let Err(e) = result.unwrap() {
+                        if verbose {
+                            eprintln!("📡 Write error to PTY: {}", e);
+                        }
+                        break;
+                    }
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("📡 Read error from stdin: {}", e);
                     }
                     break;
                 }
@@ -393,75 +615,6 @@ impl LauncherClient {
     pub fn is_connected(&self) -> bool {
         self.socket_stream.is_some()
     }
-
-    /// 対話モード検出
-    fn is_interactive_mode(&self) -> bool {
-        let args = self.claude_wrapper.get_args();
-        
-        // 引数なし = 対話モード
-        if args.is_empty() {
-            return true;
-        }
-        
-        // --printオプションがない = 対話モード
-        !args.contains(&"--print".to_string())
-    }
-
-    /// scriptコマンドを使ったインタラクティブClaude実行（ログ付き）
-    async fn run_claude_with_log_only(&mut self) -> Result<()> {
-        if self.verbose {
-            println!("🚀 Starting Claude with script logging: {}", self.claude_wrapper.to_command_string());
-        }
-
-        use tokio::process::Command;
-
-        // ログファイルパスが設定されている場合
-        if let Some(ref log_path) = self.log_file {
-            // claude の引数を構築
-            let claude_args = self.claude_wrapper.get_args();
-            let mut full_args = vec!["claude".to_string()];
-            full_args.extend(claude_args.iter().cloned());
-
-            // script コマンドでClaude実行をログ記録
-            // -q: quiet mode (no startup/done messages)
-            // -a: append to log file
-            let script_command = format!("script -q -a {} {}", 
-                log_path.to_string_lossy(),
-                full_args.join(" ")
-            );
-
-            if self.verbose {
-                println!("📝 Running: sh -c '{}'", script_command);
-            }
-
-            // シェル経由でコマンド実行
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg(&script_command);
-            
-            if let Some(dir) = self.claude_wrapper.get_working_dir() {
-                cmd.current_dir(dir);
-            }
-
-            // 標準入出力はそのまま通す（インタラクティブ性を保持）
-            cmd.stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .stdin(std::process::Stdio::inherit());
-
-            // プロセス実行・待機
-            let exit_status = cmd.status().await
-                .map_err(|e| anyhow::anyhow!("Failed to run Claude with script: {}", e))?;
-
-            if self.verbose {
-                println!("🏁 Claude script process exited with status: {:?}", exit_status);
-            }
-        } else {
-            // ログファイル未設定の場合は通常実行
-            return self.claude_wrapper.run_directly().await;
-        }
-
-        Ok(())
-    }
-
 
     /// Launcher 情報取得
     pub fn get_info(&self) -> LauncherInfo {
