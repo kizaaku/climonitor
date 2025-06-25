@@ -165,13 +165,22 @@ impl LauncherClient {
                 timestamp: Utc::now(),
             };
             
+            if self.verbose {
+                eprintln!("📤 Sending connect message: launcher_id={}, project={:?}", 
+                         self.launcher_id, self.project_name);
+            }
+            
             let msg_bytes = serde_json::to_vec(&connect_msg)?;
             stream.write_all(&msg_bytes).await?;
             stream.write_all(b"\n").await?;
             stream.flush().await?;
             
             if self.verbose {
-                eprintln!("📤 Sent connect message to monitor");
+                eprintln!("✅ Connect message sent successfully");
+            }
+        } else {
+            if self.verbose {
+                eprintln!("⚠️  No socket connection available for sending connect message");
             }
         }
         Ok(())
@@ -220,7 +229,7 @@ impl LauncherClient {
         }
 
         // 初期状態メッセージを送信
-        Self::send_status_update_async(&self.launcher_id, &self.session_id, SessionStatus::Idle, self.verbose).await;
+        Self::send_status_update_via_main_connection(&mut self.socket_stream, &self.launcher_id, &self.session_id, SessionStatus::Idle, self.verbose).await;
 
         // ターミナルガードはmain関数で作成済み（ここでは作らない）
         let terminal_guard = DummyTerminalGuard { verbose: self.verbose };
@@ -463,22 +472,26 @@ impl LauncherClient {
         wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>
     ) -> Result<portable_pty::ExitStatus> {
         let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
         
         loop {
             tokio::select! {
                 result = &mut *wait_task => {
                     return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
                 }
-                _ = tokio::signal::ctrl_c() => {
+                _ = sigint.recv() => {
                     if self.verbose {
-                        eprintln!("🛑 Received Ctrl+C, shutting down gracefully...");
+                        eprintln!("🛑 Received SIGINT, letting Claude handle it...");
                     }
-                    // ターミナルを復元してから終了
-                    // TODO: Re-enable terminal guard restoration  
-                    // if let Some(guard) = &terminal_guard {
-                    //     guard.restore();
-                    // }
-                    return Err(anyhow::anyhow!("Interrupted by user"));
+                    // Claudeプロセスが自身でSIGINTを処理するので、ここでは何もしない
+                    // プロセスが終了するまで待機を続ける
+                }
+                _ = sigterm.recv() => {
+                    if self.verbose {
+                        eprintln!("🛑 Received SIGTERM, shutting down gracefully...");
+                    }
+                    return Err(anyhow::anyhow!("Terminated by signal"));
                 }
                 _ = sigwinch.recv() => {
                     if self.verbose {
@@ -502,15 +515,18 @@ impl LauncherClient {
         &self, 
         wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>
     ) -> Result<portable_pty::ExitStatus> {
-        tokio::select! {
-            result = &mut *wait_task => {
-                result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e))
-            }
-            _ = tokio::signal::ctrl_c() => {
-                if self.verbose {
-                    eprintln!("🛑 Received Ctrl+C, shutting down gracefully...");
+        loop {
+            tokio::select! {
+                result = &mut *wait_task => {
+                    return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
                 }
-                Err(anyhow::anyhow!("Interrupted by user"))
+                _ = tokio::signal::ctrl_c() => {
+                    if self.verbose {
+                        eprintln!("🛑 Received Ctrl+C, letting Claude handle it...");
+                    }
+                    // Claudeプロセスが自身でCtrl+Cを処理するので、ここでは何もしない
+                    // プロセスが終了するまで待機を続ける
+                }
             }
         }
     }
@@ -688,7 +704,52 @@ impl LauncherClient {
         drop(_raw_guard); // 明示的にraw modeを復元
     }
 
-    /// 非同期でステータス更新をモニターサーバーに送信
+    /// 状態更新をメイン接続経由で送信
+    async fn send_status_update_via_main_connection(
+        socket_stream: &mut Option<UnixStream>,
+        launcher_id: &str,
+        session_id: &str,
+        status: SessionStatus,
+        verbose: bool,
+    ) {
+        if let Some(ref mut stream) = socket_stream {
+            let update_msg = LauncherToMonitor::StateUpdate {
+                launcher_id: launcher_id.to_string(),
+                session_id: session_id.to_string(),
+                status: status.clone(),
+                timestamp: Utc::now(),
+            };
+            
+            if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
+                if let Err(e) = stream.write_all(&msg_bytes).await {
+                    if verbose {
+                        eprintln!("⚠️  Failed to send status update: {}", e);
+                    }
+                    return;
+                }
+                if let Err(e) = stream.write_all(b"\n").await {
+                    if verbose {
+                        eprintln!("⚠️  Failed to send status update newline: {}", e);
+                    }
+                    return;
+                }
+                if let Err(e) = stream.flush().await {
+                    if verbose {
+                        eprintln!("⚠️  Failed to flush status update: {}", e);
+                    }
+                    return;
+                }
+                
+                if verbose {
+                    eprintln!("📤 Sent status update: {:?}", status);
+                }
+            }
+        } else if verbose {
+            eprintln!("⚠️  No main connection available for status update");
+        }
+    }
+
+    /// 非同期でステータス更新をモニターサーバーに送信（フォールバック用）
     async fn send_status_update_async(
         launcher_id: &str,
         session_id: &str,
@@ -716,9 +777,10 @@ impl LauncherClient {
                 if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
                     let _ = stream.write_all(&msg_bytes).await;
                     let _ = stream.write_all(b"\n").await;
+                    let _ = stream.flush().await;
                     
                     if verbose {
-                        eprintln!("📤 Sent status update: {:?}", status);
+                        eprintln!("📤 Sent fallback status update: {:?}", status);
                     }
                 }
             }

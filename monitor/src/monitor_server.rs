@@ -168,23 +168,24 @@ impl MonitorServer {
         session_manager: Arc<RwLock<SessionManager>>,
         ui_update_sender: broadcast::Sender<()>,
         verbose: bool,
-        log_file: Option<PathBuf>,
+        _log_file: Option<PathBuf>,
     ) -> Result<()> {
-        let mut stream = {
+        // 接続からストリームを取得（所有権を移転）
+        let stream = {
             let mut connections_guard = connections.write().await;
-            connections_guard.remove(&connection_id)
-                .ok_or_else(|| anyhow::anyhow!("Connection not found: {}", connection_id))?
-                .stream
-        };
-
-        // ログファイル設定を送信
-        if let Some(ref log_path) = log_file {
-            if let Err(e) = Self::send_log_file_config(&mut stream, log_path.clone()).await {
-                if verbose {
-                    eprintln!("⚠️  Failed to send log file config: {}", e);
+            match connections_guard.remove(&connection_id) {
+                Some(connection) => connection.stream,
+                None => {
+                    if verbose {
+                        eprintln!("⚠️  Connection {} not found in connections map", connection_id);
+                    }
+                    return Err(anyhow::anyhow!("Connection not found: {}", connection_id));
                 }
             }
-        }
+        };
+
+        // ログファイル設定はlauncherの起動時引数で指定されるため、
+        // ここでは送信しない（プロトコルの簡素化のため）
 
         let mut reader = BufReader::new(stream);
         let mut buffer = String::new();
@@ -204,16 +205,23 @@ impl MonitorServer {
                     
                     break;
                 }
-                Ok(_) => {
+                Ok(bytes_read) => {
                     // メッセージを受信
+                    if verbose {
+                        println!("📥 Raw message from {} ({} bytes): {}", 
+                                connection_id, bytes_read, buffer.trim());
+                    }
+                    
                     if let Ok(message) = serde_json::from_str::<LauncherToMonitor>(buffer.trim()) {
                         if verbose {
-                            println!("📨 Message from {}: {:?}", connection_id, message);
+                            println!("📨 Parsed message from {}: {:?}", connection_id, message);
                         }
 
                         // セッションマネージャーで処理
                         if let Err(e) = session_manager.write().await.handle_message(message) {
                             eprintln!("⚠️  Message handling error: {}", e);
+                        } else if verbose {
+                            println!("✅ Message processed successfully");
                         }
 
                         // UI更新通知
@@ -315,22 +323,7 @@ impl MonitorServer {
 
 
     /// ログファイル設定をlauncherに送信
-    async fn send_log_file_config(stream: &mut UnixStream, log_path: PathBuf) -> Result<()> {
-        use ccmonitor_shared::MonitorToLauncher;
-        use tokio::io::AsyncWriteExt;
-
-        let message = MonitorToLauncher::SetLogFile {
-            log_file_path: Some(log_path),
-        };
-
-        let json_data = serde_json::to_string(&message)?;
-        let data_with_newline = format!("{}\n", json_data);
-
-        stream.write_all(data_with_newline.as_bytes()).await?;
-        stream.flush().await?;
-
-        Ok(())
-    }
+    // ログファイル設定送信は削除 - launcherが起動時引数で処理する
 
     /// セッションマネージャー取得
     pub fn get_session_manager(&self) -> Arc<RwLock<SessionManager>> {
