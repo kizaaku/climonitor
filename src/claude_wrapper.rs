@@ -69,31 +69,14 @@ impl ClaudeWrapper {
         };
 
         // PTYペアを作成
-        let mut pty_pair = pty_system.openpty(PtySize {
+        let pty_pair = pty_system.openpty(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
         })?;
 
-        // Rawモードを設定（端末の入力処理を改善）
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            if let Some(fd) = pty_pair.master.as_raw_fd() {
-                unsafe {
-                    let mut termios: libc::termios = std::mem::zeroed();
-                    if libc::tcgetattr(fd, &mut termios) == 0 {
-                        // ローカルエコーを無効化（重複入力を防ぐ）
-                        termios.c_lflag &= !(libc::ECHO | libc::ECHONL);
-                        // カノニカルモードを有効化（行単位の入力処理）
-                        termios.c_lflag |= libc::ICANON;
-                        // 設定を適用
-                        libc::tcsetattr(fd, libc::TCSANOW, &termios);
-                    }
-                }
-            }
-        }
+        // Note: portable-pty handles terminal settings internally
 
         // Claudeコマンドを構築
         let mut cmd = CommandBuilder::new("claude");

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::sync::{Arc, Mutex};
+use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
 use portable_pty::MasterPty;
@@ -9,7 +10,7 @@ use crate::ansi_utils::clean_for_logging;
 
 use crate::claude_wrapper::ClaudeWrapper;
 use crate::monitor_server::MonitorServer;
-use crate::process_monitor::ProcessMonitor;
+use crate::process_monitor::{ProcessMonitor, ProcessInfo};
 use crate::protocol::{
     LauncherToMonitor, generate_connection_id
 };
@@ -20,8 +21,6 @@ pub struct LauncherClient {
     launcher_id: String,
     socket_stream: Option<UnixStream>,
     claude_wrapper: ClaudeWrapper,
-    process_monitor: ProcessMonitor,
-    output_analyzer: StandardAnalyzer,
     project_name: Option<String>,
     session_id: String,
     verbose: bool,
@@ -40,8 +39,6 @@ impl LauncherClient {
             launcher_id,
             socket_stream: None,
             claude_wrapper,
-            process_monitor: ProcessMonitor::new(),
-            output_analyzer: StandardAnalyzer::new(),
             project_name,
             session_id,
             verbose,
@@ -101,6 +98,7 @@ impl LauncherClient {
     /// Monitor からの初期設定を受信
     async fn receive_initial_config(&mut self) -> Result<()> {
         use crate::protocol::MonitorToLauncher;
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
         if let Some(ref mut stream) = self.socket_stream {
             let mut reader = BufReader::new(stream);
@@ -158,7 +156,7 @@ impl LauncherClient {
         let (mut claude_process, pty_master) = self.claude_wrapper.spawn_with_pty()?;
         // Note: std::process::Child は set_process に渡せないため、プロセス監視は省略
 
-        // PTYベースの双方向I/O開始
+        // PTYベースの双方向I/O開始（ターミナル設定も含む）
         let pty_handle = self.start_pty_bidirectional_io(pty_master).await?;
 
         // プロセス監視開始
@@ -168,18 +166,35 @@ impl LauncherClient {
             println!("👀 Monitoring started for Claude process");
         }
 
-        // Claude プロセスの終了を待つ（portable_pty::Child なので tokio::task::spawn_blocking を使用）
-        let exit_status = tokio::task::spawn_blocking(move || {
-            claude_process.wait()
-        }).await??;
+        // Claude プロセスの終了を待つタスクを一度だけ起動
+        let mut wait_task = tokio::task::spawn_blocking(move || claude_process.wait());
+        
+        // シグナルハンドリングとリサイズ処理も含める
+        let exit_status = self.wait_with_signals(&mut wait_task).await;
 
+        // ターミナル設定を確実に復元（エラーでも実行）
         if self.verbose {
-            println!("🏁 Claude process exited with status: {:?}", exit_status);
+            println!("🔧 Ensuring terminal restoration...");
         }
+        Self::force_terminal_reset(self.verbose);
 
         // 監視タスクを終了
         pty_handle.abort();
         process_handle.abort();
+
+        match exit_status {
+            Ok(status) => {
+                if self.verbose {
+                    println!("🏁 Claude process exited with status: {:?}", status);
+                }
+            }
+            Err(e) => {
+                if self.verbose {
+                    println!("❌ Claude execution failed: {}", e);
+                }
+                return Err(e);
+            }
+        }
 
         // 切断メッセージ送信
         self.send_disconnect_message().await?;
@@ -187,139 +202,6 @@ impl LauncherClient {
         Ok(())
     }
 
-    /// stdout 監視タスク開始
-    async fn start_stdout_monitoring(&self, claude_process: &mut tokio::process::Child) -> Result<JoinHandle<()>> {
-        let stdout = claude_process.stdout.take()
-            .ok_or_else(|| anyhow::anyhow!("Failed to capture stdout"))?;
-
-        let launcher_id = self.launcher_id.clone();
-        let session_id = self.session_id.clone();
-        let verbose = self.verbose;
-        let log_file = self.log_file.clone();
-
-        let handle = tokio::spawn(async move {
-            Self::monitor_output_stream(
-                stdout,
-                launcher_id,
-                session_id,
-                "stdout".to_string(),
-                verbose,
-                log_file,
-            ).await;
-        });
-
-        Ok(handle)
-    }
-
-    /// stderr 監視タスク開始
-    async fn start_stderr_monitoring(&self, claude_process: &mut tokio::process::Child) -> Result<JoinHandle<()>> {
-        let stderr = claude_process.stderr.take()
-            .ok_or_else(|| anyhow::anyhow!("Failed to capture stderr"))?;
-
-        let launcher_id = self.launcher_id.clone();
-        let session_id = self.session_id.clone();
-        let verbose = self.verbose;
-        let log_file = self.log_file.clone();
-
-        let handle = tokio::spawn(async move {
-            Self::monitor_output_stream(
-                stderr,
-                launcher_id,
-                session_id,
-                "stderr".to_string(),
-                verbose,
-                log_file,
-            ).await;
-        });
-
-        Ok(handle)
-    }
-
-    /// 出力ストリーム監視
-    async fn monitor_output_stream(
-        stream: impl tokio::io::AsyncRead + Unpin,
-        _launcher_id: String,
-        _session_id: String,
-        stream_name: String,
-        verbose: bool,
-        log_file: Option<PathBuf>,
-    ) {
-        let mut reader = BufReader::new(stream);
-        let mut buffer = String::new();
-        let mut analyzer = StandardAnalyzer::new();
-
-        // ログファイルを開く（stdout のみ）
-        let mut log_writer = if stream_name == "stdout" {
-            if let Some(ref log_path) = log_file {
-                match tokio::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_path)
-                    .await
-                {
-                    Ok(file) => Some(file),
-                    Err(e) => {
-                        if verbose {
-                            eprintln!("⚠️  Failed to open log file {}: {}", log_path.display(), e);
-                        }
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        loop {
-            buffer.clear();
-            
-            match reader.read_line(&mut buffer).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let line = buffer.trim();
-                    
-                    // ユーザーには通常通り出力表示
-                    match stream_name.as_str() {
-                        "stdout" => println!("{}", line),
-                        "stderr" => eprintln!("{}", line),
-                        _ => {}
-                    }
-
-                    if verbose {
-                        println!("📝 [{}] {}", stream_name, line);
-                    }
-
-                    // ログファイルに書き込み（stdout のみ、ANSI エスケープシーケンスをクリーンアップ）
-                    if let Some(ref mut writer) = log_writer {
-                        let clean_line = clean_for_logging(line);
-                        let log_line = format!("{}\n", clean_line);
-                        if let Err(e) = writer.write_all(log_line.as_bytes()).await {
-                            if verbose {
-                                eprintln!("⚠️  Failed to write to log file: {}", e);
-                            }
-                        } else {
-                            // フラッシュして確実に書き込み
-                            let _ = writer.flush().await;
-                        }
-                    }
-
-                    // 出力を解析
-                    let _analysis = analyzer.analyze_output(line, &stream_name);
-                    
-                    // TODO: Monitor に送信
-                    // このセクションは後で実装
-                }
-                Err(e) => {
-                    if verbose {
-                        eprintln!("📡 Read error from {}: {}", stream_name, e);
-                    }
-                    break;
-                }
-            }
-        }
-    }
 
     /// PTY 双方向I/Oタスク開始
     async fn start_pty_bidirectional_io(&self, pty_master: Box<dyn MasterPty + Send>) -> Result<JoinHandle<()>> {
@@ -393,8 +275,21 @@ impl LauncherClient {
             }
         };
 
+        // ターミナルをRAWモードに設定
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() {
+            if verbose {
+                println!("📝 [terminal] Setting raw mode...");
+            }
+            Self::set_raw_mode(verbose);
+        } else {
+            if verbose {
+                println!("⚠️ [terminal] Stdin is not a terminal, skipping raw mode");
+            }
+        }
+
         // 双方向I/Oタスクを起動
-        let pty_to_stdout = tokio::spawn(async move {
+        let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout(
                 pty_reader,
                 verbose,
@@ -403,36 +298,26 @@ impl LauncherClient {
             ).await;
         });
 
-        let stdin_to_pty = tokio::spawn(async move {
-            // インタラクティブターミナルかどうかチェック
-            let is_interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
-            
-            if is_interactive {
-                if verbose {
-                    println!("📝 [pty] Using raw input mode for interactive terminal");
-                }
-                Self::handle_stdin_to_pty_raw(pty_writer, verbose).await;
-            } else {
-                if verbose {
-                    println!("📝 [pty] Using standard input mode for non-interactive input");
-                }
-                Self::handle_stdin_to_pty(pty_writer, verbose).await;
-            }
+        let mut stdin_to_pty = tokio::spawn(async move {
+            Self::handle_stdin_to_pty_simple(pty_writer, verbose).await;
         });
-
-        // どちらかのタスクが終了したら両方終了
+        
         tokio::select! {
-            _ = pty_to_stdout => {
+            _ = &mut pty_to_stdout => {
                 if verbose {
                     println!("📡 PTY to stdout task ended");
                 }
+                stdin_to_pty.abort();
             }
-            _ = stdin_to_pty => {
+            _ = &mut stdin_to_pty => {
                 if verbose {
                     println!("📡 Stdin to PTY task ended");
                 }
+                pty_to_stdout.abort();
             }
         }
+
+        // ターミナル設定の復元はrun_claudeで行う
     }
 
     /// PTY → stdout + log 転送処理
@@ -460,12 +345,13 @@ impl LauncherClient {
             match result {
                 Ok(Ok((_buffer_data, 0))) => break, // EOF
                 Ok(Ok((buffer_data, n))) => {
-                    let output = String::from_utf8_lossy(&buffer_data[..n]);
-                    
-                    // ユーザーには通常通り出力表示
-                    print!("{}", output);
+                    // バイナリデータをそのまま標準出力に書き込む（UTF-8変換しない）
                     use std::io::Write;
+                    std::io::stdout().write_all(&buffer_data[..n]).unwrap();
                     std::io::stdout().flush().unwrap();
+                    
+                    // ログ記録用にのみUTF-8変換を行う
+                    let output = String::from_utf8_lossy(&buffer_data[..n]);
 
                     if verbose {
                         println!("📝 [pty→stdout] {}", output.trim());
@@ -506,153 +392,61 @@ impl LauncherClient {
         }
     }
 
-    /// stdin → PTY 転送処理（UTF-8マルチバイト文字対応）
-    async fn handle_stdin_to_pty(
+    /// stdin → PTY 転送処理（シンプル版）
+    async fn handle_stdin_to_pty_simple(
         pty_writer: Box<dyn std::io::Write + Send>,
         verbose: bool,
     ) {
-        use tokio::io::{AsyncReadExt};
+        use tokio::io::AsyncReadExt;
         use std::sync::{Arc, Mutex};
-        use std::io::{self, IsTerminal};
         
         let pty_writer = Arc::new(Mutex::new(pty_writer));
-        
-        // ターミナルがTTYかどうかを確認
-        if verbose {
-            println!("📝 [stdin→pty] TTY check: stdin={}, stdout={}, stderr={}", 
-                io::stdin().is_terminal(),
-                io::stdout().is_terminal(), 
-                io::stderr().is_terminal()
-            );
-        }
-        
         let mut stdin = tokio::io::stdin();
         let mut buffer = [0u8; 1024];
-        let mut byte_buffer = Vec::new(); // バイトレベルでのバッファリング
 
         if verbose {
-            println!("📝 [stdin→pty] Starting input reading loop");
+            println!("📝 [stdin→pty] Starting simplified input reading (pass-through mode)");
         }
 
         loop {
-            if verbose {
-                println!("📝 [stdin→pty] Waiting for stdin input...");
-            }
             match stdin.read(&mut buffer).await {
-                Ok(0) => break, // EOF
+                Ok(0) => {
+                    if verbose {
+                        println!("📝 [stdin→pty] EOF received");
+                    }
+                    break;
+                }
                 Ok(n) => {
-                    // 読み取ったバイトを累積バッファに追加
-                    byte_buffer.extend_from_slice(&buffer[..n]);
+                    // すべてのバイトをそのまま通す（VTフィルタリングのみ）
+                    let filtered_data: Vec<u8> = buffer[..n].iter()
+                        .filter(|&&byte| byte != 11) // VT (0x0B) のみフィルタ
+                        .copied()
+                        .collect();
                     
-                    // UTF-8文字境界を見つけて処理
-                    let mut processed_bytes = 0;
-                    
-                    while processed_bytes < byte_buffer.len() {
-                        // 残りのバイトでUTF-8文字の開始を探す
-                        let remaining = &byte_buffer[processed_bytes..];
-                        
-                        // UTF-8文字として有効な最大長を見つける
-                        match std::str::from_utf8(remaining) {
-                            Ok(valid_str) => {
-                                // 全て有効なUTF-8文字列
-                                if !valid_str.is_empty() {
-                                    if verbose {
-                                        // 制御文字を可視化して表示
-                                        let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
-                                        println!("📝 [stdin→pty] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
-                                    }
-
-                                    // PTYに書き込み
-                                    let result = tokio::task::spawn_blocking({
-                                        let pty_writer = pty_writer.clone();
-                                        let input = valid_str.to_string();
-                                        move || {
-                                            use std::io::Write;
-                                            let mut writer = pty_writer.lock().unwrap();
-                                            writer.write_all(input.as_bytes())?;
-                                            writer.flush()?;
-                                            Ok::<(), std::io::Error>(())
-                                        }
-                                    }).await;
-
-                                    if let Err(e) = result {
-                                        if verbose {
-                                            eprintln!("📡 Spawn blocking error for stdin write: {}", e);
-                                        }
-                                        break;
-                                    } else if let Err(e) = result.unwrap() {
-                                        if verbose {
-                                            eprintln!("📡 Write error to PTY: {}", e);
-                                        }
-                                        break;
-                                    }
-                                }
-                                
-                                // 全体を処理完了
-                                processed_bytes = byte_buffer.len();
-                                break;
-                            }
-                            Err(utf8_error) => {
-                                // 一部だけ有効、または不完全なUTF-8シーケンス
-                                let valid_up_to = utf8_error.valid_up_to();
-                                
-                                if valid_up_to > 0 {
-                                    // 有効な部分を処理
-                                    let valid_part = &remaining[..valid_up_to];
-                                    if let Ok(valid_str) = std::str::from_utf8(valid_part) {
-                                        if !valid_str.is_empty() {
-                                            if verbose {
-                                                let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
-                                                println!("📝 [stdin→pty] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
-                                            }
-
-                                            // 有効部分をPTYに書き込み
-                                            let result = tokio::task::spawn_blocking({
-                                                let pty_writer = pty_writer.clone();
-                                                let input = valid_str.to_string();
-                                                move || {
-                                                    use std::io::Write;
-                                                    let mut writer = pty_writer.lock().unwrap();
-                                                    writer.write_all(input.as_bytes())?;
-                                                    writer.flush()?;
-                                                    Ok::<(), std::io::Error>(())
-                                                }
-                                            }).await;
-
-                                            if let Err(e) = result {
-                                                if verbose {
-                                                    eprintln!("📡 Spawn blocking error for stdin write: {}", e);
-                                                }
-                                                break;
-                                            } else if let Err(e) = result.unwrap() {
-                                                if verbose {
-                                                    eprintln!("📡 Write error to PTY: {}", e);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    processed_bytes += valid_up_to;
+                    if verbose && n > 0 {
+                        let display_bytes: Vec<String> = buffer[..n].iter()
+                            .map(|&b| {
+                                if b == 11 {
+                                    format!("VT")
+                                } else if b.is_ascii_graphic() || b == b' ' {
+                                    format!("'{}'", b as char)
+                                } else if b < 32 {
+                                    format!("^{}", (b + 64) as char) // Control character notation
                                 } else {
-                                    // 最初から無効 - 不完全なUTF-8シーケンスの可能性
-                                    // 次の読み取りを待つためにループを抜ける
-                                    break;
+                                    format!("{:02X}", b)
                                 }
+                            })
+                            .collect();
+                        println!("📝 [stdin→pty] {} bytes: [{}]", n, display_bytes.join(" "));
+                    }
+                    
+                    if !filtered_data.is_empty() {
+                        if let Err(e) = Self::write_bytes_to_pty(&pty_writer, &filtered_data, verbose).await {
+                            if verbose {
+                                eprintln!("📡 Error writing to PTY: {}", e);
                             }
+                            break;
                         }
-                    }
-                    
-                    // 処理済みバイトをバッファから削除
-                    if processed_bytes > 0 {
-                        byte_buffer.drain(..processed_bytes);
-                    }
-                    
-                    // バッファが大きくなりすぎた場合のガード（無効なデータの蓄積を防ぐ）
-                    if byte_buffer.len() > 16 {
-                        if verbose {
-                            eprintln!("⚠️  Clearing input buffer due to invalid UTF-8 sequence");
-                        }
-                        byte_buffer.clear();
                     }
                 }
                 Err(e) => {
@@ -665,234 +459,48 @@ impl LauncherClient {
         }
     }
 
-    /// stdin → PTY 転送処理（Rawモード - 直接ターミナル入力）
-    async fn handle_stdin_to_pty_raw(
-        pty_writer: Box<dyn std::io::Write + Send>,
+    /// バイナリデータを直接PTYに書き込む
+    async fn write_bytes_to_pty(
+        pty_writer: &Arc<Mutex<Box<dyn std::io::Write + Send>>>,
+        data: &[u8],
         verbose: bool,
-    ) {
-        use std::sync::{Arc, Mutex};
-        use std::io::Read;
-        
-        let pty_writer = Arc::new(Mutex::new(pty_writer));
-        let mut buffer = [0u8; 1024];
-        let mut byte_buffer = Vec::new();
-
+    ) -> Result<()> {
         if verbose {
-            println!("📝 [stdin→pty-raw] Starting raw input reading loop with terminal control");
+            let display_data = String::from_utf8_lossy(data);
+            let display_input = display_data.replace('\n', "\\n").replace('\r', "\\r");
+            println!("📝 [stdin→pty] \"{}\" (bytes: {:?})", display_input, data);
         }
 
-        // ターミナルをRAWモードに設定
-        #[cfg(unix)]
-        let original_termios = unsafe {
-            let mut termios: libc::termios = std::mem::zeroed();
-            let mut original_termios: Option<libc::termios> = None;
-            
-            if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
-                original_termios = Some(termios);
-                
-                // RAWモード設定: 入力の即座処理とエコー無効化
-                termios.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ECHONL | libc::ISIG);
-                termios.c_iflag &= !(libc::ICRNL | libc::INLCR | libc::IXON | libc::IXOFF);
-                termios.c_oflag &= !libc::OPOST;
-                termios.c_cc[libc::VMIN] = 1;  // 最小読み取り文字数
-                termios.c_cc[libc::VTIME] = 0; // タイムアウト無効
-                
-                if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) == 0 {
-                    if verbose {
-                        println!("📝 [stdin→pty-raw] Terminal set to raw mode");
-                    }
-                } else {
-                    if verbose {
-                        eprintln!("⚠️  Failed to set terminal raw mode");
-                    }
-                }
-            } else {
+        let result = tokio::task::spawn_blocking({
+            let pty_writer = pty_writer.clone();
+            let data = data.to_vec();
+            move || {
+                use std::io::Write;
+                let mut writer = pty_writer.lock().unwrap();
+                writer.write_all(&data)?;
+                writer.flush()?;
+                Ok::<(), std::io::Error>(())
+            }
+        }).await;
+
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
                 if verbose {
-                    eprintln!("⚠️  Failed to get terminal attributes");
+                    eprintln!("📡 Write error to PTY: {}", e);
                 }
+                Err(anyhow::anyhow!("PTY write error: {}", e))
             }
-            
-            original_termios
-        };
-        
-        #[cfg(not(unix))]
-        let original_termios: Option<()> = None;
-
-        loop {
-            // 直接標準入力からバイトを読み取り
-            let result = tokio::task::spawn_blocking(move || {
-                let mut stdin = std::io::stdin();
-                match stdin.read(&mut buffer) {
-                    Ok(n) => Ok((n, buffer.to_vec())),
-                    Err(e) => Err(e),
+            Err(e) => {
+                if verbose {
+                    eprintln!("📡 Spawn blocking error for stdin write: {}", e);
                 }
-            }).await;
-
-            match result {
-                Ok(Ok((0, _))) => break, // EOF
-                Ok(Ok((n, read_buffer))) => {
-                    // 読み取ったバイトを累積バッファに追加
-                    byte_buffer.extend_from_slice(&read_buffer[..n]);
-                    
-                    if verbose {
-                        // エスケープシーケンスを可視化
-                        let mut debug_str = String::new();
-                        for &byte in &read_buffer[..n] {
-                            match byte {
-                                27 => debug_str.push_str("ESC"),
-                                10 => debug_str.push_str("\\n"),
-                                13 => debug_str.push_str("\\r"),
-                                9 => debug_str.push_str("\\t"),
-                                91 => debug_str.push_str("["),
-                                65..=90 | 97..=122 => debug_str.push(byte as char),
-                                _ if byte >= 32 && byte <= 126 => debug_str.push(byte as char),
-                                _ => debug_str.push_str(&format!("\\x{:02x}", byte)),
-                            }
-                        }
-                        println!("📝 [stdin→pty-raw] Read {} bytes: [{}] raw: {:?}", n, debug_str, &read_buffer[..n]);
-                    }
-                    
-                    // UTF-8文字境界を見つけて処理
-                    let mut processed_bytes = 0;
-                    
-                    while processed_bytes < byte_buffer.len() {
-                        // 残りのバイトでUTF-8文字の開始を探す
-                        let remaining = &byte_buffer[processed_bytes..];
-                        
-                        // UTF-8文字として有効な最大長を見つける
-                        match std::str::from_utf8(remaining) {
-                            Ok(valid_str) => {
-                                // 全て有効なUTF-8文字列
-                                if !valid_str.is_empty() {
-                                    if verbose {
-                                        let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
-                                        println!("📝 [stdin→pty-raw] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
-                                    }
-
-                                    // PTYに書き込み
-                                    let result = tokio::task::spawn_blocking({
-                                        let pty_writer = pty_writer.clone();
-                                        let input = valid_str.to_string();
-                                        move || {
-                                            use std::io::Write;
-                                            let mut writer = pty_writer.lock().unwrap();
-                                            writer.write_all(input.as_bytes())?;
-                                            writer.flush()?;
-                                            Ok::<(), std::io::Error>(())
-                                        }
-                                    }).await;
-
-                                    if let Err(e) = result {
-                                        if verbose {
-                                            eprintln!("📡 Spawn blocking error for stdin write: {}", e);
-                                        }
-                                        break;
-                                    } else if let Err(e) = result.unwrap() {
-                                        if verbose {
-                                            eprintln!("📡 Write error to PTY: {}", e);
-                                        }
-                                        break;
-                                    }
-                                }
-                                
-                                // 全体を処理完了
-                                processed_bytes = byte_buffer.len();
-                                break;
-                            }
-                            Err(utf8_error) => {
-                                // 一部だけ有効、または不完全なUTF-8シーケンス
-                                let valid_up_to = utf8_error.valid_up_to();
-                                
-                                if valid_up_to > 0 {
-                                    // 有効な部分を処理
-                                    let valid_part = &remaining[..valid_up_to];
-                                    if let Ok(valid_str) = std::str::from_utf8(valid_part) {
-                                        if !valid_str.is_empty() {
-                                            if verbose {
-                                                let display_input = valid_str.replace('\n', "\\n").replace('\r', "\\r");
-                                                println!("📝 [stdin→pty-raw] \"{}\" (bytes: {:?})", display_input, valid_str.as_bytes());
-                                            }
-
-                                            // 有効部分をPTYに書き込み
-                                            let result = tokio::task::spawn_blocking({
-                                                let pty_writer = pty_writer.clone();
-                                                let input = valid_str.to_string();
-                                                move || {
-                                                    use std::io::Write;
-                                                    let mut writer = pty_writer.lock().unwrap();
-                                                    writer.write_all(input.as_bytes())?;
-                                                    writer.flush()?;
-                                                    Ok::<(), std::io::Error>(())
-                                                }
-                                            }).await;
-
-                                            if let Err(e) = result {
-                                                if verbose {
-                                                    eprintln!("📡 Spawn blocking error for stdin write: {}", e);
-                                                }
-                                                break;
-                                            } else if let Err(e) = result.unwrap() {
-                                                if verbose {
-                                                    eprintln!("📡 Write error to PTY: {}", e);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    processed_bytes += valid_up_to;
-                                } else {
-                                    // 最初から無効 - 不完全なUTF-8シーケンスの可能性
-                                    // 次の読み取りを待つためにループを抜ける
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // 処理済みバイトをバッファから削除
-                    if processed_bytes > 0 {
-                        byte_buffer.drain(..processed_bytes);
-                    }
-                    
-                    // バッファが大きくなりすぎた場合のガード（無効なデータの蓄積を防ぐ）
-                    if byte_buffer.len() > 16 {
-                        if verbose {
-                            eprintln!("⚠️  Clearing input buffer due to invalid UTF-8 sequence");
-                        }
-                        byte_buffer.clear();
-                    }
-                }
-                Ok(Err(e)) => {
-                    if verbose {
-                        eprintln!("📡 Read error from stdin: {}", e);
-                    }
-                    break;
-                }
-                Err(e) => {
-                    if verbose {
-                        eprintln!("📡 Spawn blocking error: {}", e);
-                    }
-                    break;
-                }
-            }
-        }
-        
-        // ターミナル設定を復元
-        #[cfg(unix)]
-        if let Some(original) = original_termios {
-            unsafe {
-                if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &original) == 0 {
-                    if verbose {
-                        println!("📝 [stdin→pty-raw] Terminal settings restored");
-                    }
-                } else {
-                    if verbose {
-                        eprintln!("⚠️  Failed to restore terminal settings");
-                    }
-                }
+                Err(anyhow::anyhow!("Spawn blocking error: {}", e))
             }
         }
     }
+
+
 
     /// プロセス監視タスク開始
     async fn start_process_monitoring(&self) -> JoinHandle<()> {
@@ -902,19 +510,36 @@ impl LauncherClient {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            let mut last_info: Option<ProcessInfo> = None;
 
             loop {
                 interval.tick().await;
                 
                 let process_info = process_monitor.get_process_info().await;
                 
-                if verbose {
+                // Only log if there are actual processes or if info has changed
+                let has_activity = process_info.cpu_percent > 0.0 || 
+                                 process_info.memory_mb > 0 || 
+                                 process_info.child_count > 0;
+                
+                let info_changed = match &last_info {
+                    None => has_activity,
+                    Some(last) => {
+                        last.cpu_percent != process_info.cpu_percent ||
+                        last.memory_mb != process_info.memory_mb ||
+                        last.child_count != process_info.child_count
+                    }
+                };
+                
+                if verbose && (has_activity || info_changed) {
                     println!("📊 Process: CPU {:.1}%, Memory {}MB, Children {}",
                         process_info.cpu_percent,
                         process_info.memory_mb,
                         process_info.child_count
                     );
                 }
+                
+                last_info = Some(process_info);
 
                 // TODO: Monitor に送信
                 // このセクションは後で実装
@@ -966,6 +591,137 @@ impl LauncherClient {
             session_id: self.session_id.clone(),
         }
     }
+
+    /// ターミナルをRAWモードに設定
+    #[cfg(unix)]
+    fn set_raw_mode(verbose: bool) -> Option<libc::termios> {
+        unsafe {
+            let mut termios: libc::termios = std::mem::zeroed();
+            
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+                let original_termios = termios;
+                
+                // RAWモード設定: 入力の即座処理とエコー無効化
+                termios.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ECHONL);
+                termios.c_iflag &= !(libc::ICRNL | libc::INLCR | libc::IXON | libc::IXOFF);
+                termios.c_oflag &= !libc::OPOST;
+                termios.c_cc[libc::VMIN] = 1;  // 最小読み取り文字数
+                termios.c_cc[libc::VTIME] = 0; // タイムアウト無効
+                
+                if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) == 0 {
+                    if verbose {
+                        println!("📝 [terminal] Set to raw mode successfully");
+                        // 設定を確認
+                        let mut check_termios: libc::termios = std::mem::zeroed();
+                        if libc::tcgetattr(libc::STDIN_FILENO, &mut check_termios) == 0 {
+                            println!("📝 [terminal] Current c_lflag: {:x}", check_termios.c_lflag);
+                            println!("📝 [terminal] ICANON disabled: {}", (check_termios.c_lflag & libc::ICANON) == 0);
+                            println!("📝 [terminal] ECHO disabled: {}", (check_termios.c_lflag & libc::ECHO) == 0);
+                        }
+                    }
+                    Some(original_termios)
+                } else {
+                    if verbose {
+                        eprintln!("⚠️  Failed to set terminal raw mode");
+                    }
+                    None
+                }
+            } else {
+                if verbose {
+                    eprintln!("⚠️  Failed to get terminal attributes");
+                }
+                None
+            }
+        }
+    }
+
+    /// ターミナルをRAWモードに設定（非Unix環境用）
+    #[cfg(not(unix))]
+    fn set_raw_mode(verbose: bool) -> Option<()> {
+        if verbose {
+            println!("📝 [terminal] Raw mode not supported on this platform");
+        }
+        None
+    }
+
+    /// 強制的にターミナル設定をリセット
+    #[cfg(unix)]
+    pub fn force_terminal_reset(verbose: bool) {
+        unsafe {
+            let mut termios: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+                // 標準的な設定を強制適用
+                termios.c_lflag |= libc::ICANON | libc::ECHO | libc::ECHONL | libc::ISIG;
+                termios.c_iflag |= libc::ICRNL;
+                termios.c_oflag |= libc::OPOST;
+                termios.c_cc[libc::VMIN] = 1;
+                termios.c_cc[libc::VTIME] = 0;
+                
+                if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &termios) == 0 {
+                    if verbose {
+                        println!("📝 [terminal] Force reset successful");
+                    }
+                } else if verbose {
+                    eprintln!("⚠️  Force reset failed");
+                }
+            }
+        }
+        
+        // エスケープシーケンスによるリセットも試行
+        print!("\x1bc"); // Full reset
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    }
+
+    /// 強制的にターミナル設定をリセット（非Unix環境用）
+    #[cfg(not(unix))]
+    pub fn force_terminal_reset(_verbose: bool) {
+        // 非Unix環境では何もしない
+    }
+    
+    /// プロセス終了とシグナルを待機
+    #[cfg(unix)]
+    async fn wait_with_signals(&self, wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>) -> Result<portable_pty::ExitStatus> {
+        let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+        
+        loop {
+            tokio::select! {
+                result = &mut *wait_task => {
+                    return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    if self.verbose {
+                        println!("🛑 Received Ctrl+C, shutting down gracefully...");
+                    }
+                    return Err(anyhow::anyhow!("Interrupted by user"));
+                }
+                _ = sigwinch.recv() => {
+                    if self.verbose {
+                        println!("🔄 Terminal resized - reapplying settings...");
+                    }
+                    // rawモード設定を再適用
+                    Self::set_raw_mode(self.verbose);
+                    // ループ継続
+                }
+            }
+        }
+    }
+    
+    /// プロセス終了とシグナルを待機（非Unix環境用）
+    #[cfg(not(unix))]
+    async fn wait_with_signals(&self, wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>) -> Result<portable_pty::ExitStatus> {
+        tokio::select! {
+            result = &mut *wait_task => {
+                result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e))
+            }
+            _ = tokio::signal::ctrl_c() => {
+                if self.verbose {
+                    println!("🛑 Received Ctrl+C, shutting down gracefully...");
+                }
+                Err(anyhow::anyhow!("Interrupted by user"))
+            }
+        }
+    }
 }
 
 /// Launcher 情報
@@ -976,6 +732,7 @@ pub struct LauncherInfo {
     pub claude_args: Vec<String>,
     pub session_id: String,
 }
+
 
 #[cfg(test)]
 mod tests {

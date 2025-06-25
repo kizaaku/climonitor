@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::protocol::LauncherToMonitor;
-use crate::session_manager::{SessionManager, SessionStats};
+use crate::session_manager::SessionManager;
 
 /// 接続情報
 #[derive(Debug)]
@@ -263,10 +263,6 @@ impl MonitorServer {
         self.ui_update_sender.subscribe()
     }
 
-    /// 現在の統計情報取得
-    pub async fn get_stats(&self) -> SessionStats {
-        self.session_manager.read().await.get_stats()
-    }
 
     /// ログファイル設定をlauncherに送信
     async fn send_log_file_config(stream: &mut UnixStream, log_path: PathBuf) -> Result<()> {
