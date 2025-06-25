@@ -59,13 +59,25 @@ impl LauncherClient {
     fn try_connect_to_monitor(&mut self, socket_path: Option<PathBuf>) -> Result<()> {
         let socket_path = socket_path.unwrap_or_else(|| {
             std::env::var("CCMONITOR_SOCKET_PATH")
-                .unwrap_or_else(|_| "/tmp/ccmonitor.sock".to_string())
+                .unwrap_or_else(|_| {
+                    std::env::temp_dir()
+                        .join("ccmonitor.sock")
+                        .to_string_lossy()
+                        .to_string()
+                })
                 .into()
         });
 
         // Monitor サーバーに接続（失敗しても続行）
+        if self.verbose {
+            eprintln!("🔄 Attempting to connect to monitor server at {}", socket_path.display());
+            eprintln!("🔍 Socket path exists: {}", socket_path.exists());
+        }
+        
         match std::os::unix::net::UnixStream::connect(&socket_path) {
             Ok(stream) => {
+                // NonBlockingに設定
+                stream.set_nonblocking(true)?;
                 self.socket_stream = Some(tokio::net::UnixStream::from_std(stream)?);
                 if self.verbose {
                     eprintln!("🔗 Connected to monitor server at {}", socket_path.display());
@@ -534,7 +546,12 @@ impl LauncherClient {
     ) {
         // 新しい接続でステータス更新を送信（ベストエフォート）
         let socket_path = std::env::var("CCMONITOR_SOCKET_PATH")
-            .unwrap_or_else(|_| "/tmp/ccmonitor.sock".to_string());
+            .unwrap_or_else(|_| {
+                std::env::temp_dir()
+                    .join("ccmonitor.sock")
+                    .to_string_lossy()
+                    .to_string()
+            });
         
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
