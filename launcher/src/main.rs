@@ -86,6 +86,11 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("❌ Claude execution failed: {}", e);
+                        #[cfg(unix)]
+                        {
+                            drop(_terminal_guard); // ターミナル設定を明示的に復元
+                            ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
+                        }
                         std::process::exit(1);
                     }
                 }
@@ -94,11 +99,21 @@ async fn main() -> Result<()> {
                 if verbose {
                     println!("\n🛑 Received SIGINT, shutting down gracefully...");
                 }
+                #[cfg(unix)]
+                {
+                    drop(_terminal_guard); // ターミナル設定を明示的に復元
+                    ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
+                }
                 std::process::exit(130); // 128 + 2 (SIGINT)
             }
             _ = sigterm.recv() => {
                 if verbose {
                     println!("\n🛑 Received SIGTERM, shutting down gracefully...");
+                }
+                #[cfg(unix)]
+                {
+                    drop(_terminal_guard); // ターミナル設定を明示的に復元
+                    ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
                 }
                 std::process::exit(143); // 128 + 15 (SIGTERM)
             }
@@ -116,6 +131,11 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("❌ Claude execution failed: {}", e);
+                #[cfg(unix)]
+                {
+                    drop(_terminal_guard); // ターミナル設定を明示的に復元
+                    ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
+                }
                 std::process::exit(1);
             }
         }

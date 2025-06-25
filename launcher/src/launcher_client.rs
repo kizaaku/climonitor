@@ -732,6 +732,39 @@ impl LauncherClient {
     }
 }
 
+/// 強制的にターミナルをcooked modeに復元（エラー時の緊急用）
+#[cfg(unix)]
+pub fn force_restore_terminal() {
+    use std::os::unix::io::AsRawFd;
+    use std::os::fd::BorrowedFd;
+    
+    let stdin_fd = std::io::stdin().as_raw_fd();
+    if nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+        
+        // 標準的なcooked mode設定を適用
+        if let Ok(mut termios) = nix::sys::termios::tcgetattr(borrowed_fd) {
+            // ENABLEフラグを設定（cooked mode）
+            termios.local_flags |= nix::sys::termios::LocalFlags::ICANON 
+                | nix::sys::termios::LocalFlags::ECHO 
+                | nix::sys::termios::LocalFlags::ECHOE 
+                | nix::sys::termios::LocalFlags::ECHOK 
+                | nix::sys::termios::LocalFlags::ISIG;
+            
+            // INPUTフラグも修正
+            termios.input_flags |= nix::sys::termios::InputFlags::ICRNL 
+                | nix::sys::termios::InputFlags::IXON;
+            
+            let _ = nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &termios);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn force_restore_terminal() {
+    // 非Unix環境では何もしない
+}
+
 /// グローバル用のターミナルガード作成関数（main関数で使用）
 #[cfg(unix)]
 pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
