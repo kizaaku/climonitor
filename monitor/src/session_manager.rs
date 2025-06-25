@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use chrono::Utc;
-use crate::protocol::{
+use ccmonitor_shared::{
     LauncherInfo, SessionInfo, ProcessMetrics, 
     LauncherStatus, SessionStatus, LauncherToMonitor
 };

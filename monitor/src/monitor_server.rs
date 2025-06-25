@@ -8,7 +8,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 
-use crate::protocol::LauncherToMonitor;
+use ccmonitor_shared::LauncherToMonitor;
 use crate::session_manager::SessionManager;
 
 /// 接続情報
@@ -93,7 +93,7 @@ impl MonitorServer {
                 } => {
                     match accept_result {
                         Ok((stream, _)) => {
-                            let connection_id = crate::protocol::generate_connection_id();
+                            let connection_id = ccmonitor_shared::generate_connection_id();
                             if self.verbose {
                                 println!("🔗 New connection: {}", connection_id);
                             }
@@ -316,7 +316,7 @@ impl MonitorServer {
 
     /// ログファイル設定をlauncherに送信
     async fn send_log_file_config(stream: &mut UnixStream, log_path: PathBuf) -> Result<()> {
-        use crate::protocol::MonitorToLauncher;
+        use ccmonitor_shared::MonitorToLauncher;
         use tokio::io::AsyncWriteExt;
 
         let message = MonitorToLauncher::SetLogFile {
@@ -358,14 +358,8 @@ impl MonitorServer {
 
     /// ソケットパス取得
     fn get_socket_path() -> Result<PathBuf> {
-        let socket_path = std::env::var("CCMONITOR_SOCKET_PATH")
-            .unwrap_or_else(|_| {
-                std::env::temp_dir()
-                    .join("ccmonitor.sock")
-                    .to_string_lossy()
-                    .to_string()
-            });
-        Ok(PathBuf::from(socket_path))
+        let temp_dir = std::env::temp_dir();
+        Ok(temp_dir.join("ccmonitor.sock"))
     }
 
     /// 外部クライアント用のソケットパス取得

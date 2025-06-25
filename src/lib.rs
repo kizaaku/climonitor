@@ -4,4 +4,5 @@ pub mod live_ui;
 pub mod monitor_server;
 pub mod protocol;
 pub mod session_manager;
+pub mod session_state;
 pub mod unicode_utils;

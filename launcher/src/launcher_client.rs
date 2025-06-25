@@ -11,10 +11,8 @@ use chrono::Utc;
 
 
 use crate::claude_wrapper::ClaudeWrapper;
-use crate::protocol::{
-    LauncherToMonitor, SessionStatus, generate_connection_id
-};
 use crate::session_state::SessionStateDetector;
+use ccmonitor_shared::{LauncherToMonitor, SessionStatus, generate_connection_id};
 
 /// Launcher クライアント
 pub struct LauncherClient {
@@ -410,7 +408,7 @@ impl LauncherClient {
         mut log_writer: Option<tokio::fs::File>,
     ) {
         use crate::session_state::SessionStateDetector;
-        use crate::protocol::SessionStatus;
+        use ccmonitor_shared::SessionStatus;
         
         let mut state_detector = SessionStateDetector::new(verbose);
         let mut last_status = SessionStatus::Idle;

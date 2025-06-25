@@ -1,16 +1,8 @@
 use clap::Parser;
 
-mod claude_wrapper;
-mod launcher_client;
-mod live_ui;
-mod monitor_server;
-mod protocol;
-mod session_manager;
-mod session_state;
-mod unicode_utils;
-
-use monitor_server::MonitorServer;
-use live_ui::{LiveUI, print_snapshot};
+use ccmonitor_monitor::live_ui::{LiveUI, print_snapshot};
+use ccmonitor_monitor::monitor_server::MonitorServer;
+use ccmonitor_monitor::session_manager::SessionManager;
 
 #[derive(Parser)]
 #[command(name = "ccmonitor")]
@@ -135,7 +127,7 @@ async fn run_snapshot_mode(verbose: bool) -> anyhow::Result<()> {
 }
 
 /// Monitor サーバーへの接続試行
-async fn try_connect_to_monitor() -> anyhow::Result<std::sync::Arc<tokio::sync::RwLock<session_manager::SessionManager>>> {
+async fn try_connect_to_monitor() -> anyhow::Result<std::sync::Arc<tokio::sync::RwLock<SessionManager>>> {
     use tokio::net::UnixStream;
     use tokio::time::{timeout, Duration};
 
@@ -146,7 +138,7 @@ async fn try_connect_to_monitor() -> anyhow::Result<std::sync::Arc<tokio::sync::
     
     // TODO: 実際のセッション情報取得
     // 現在は空のSessionManagerを返す（デモ用）
-    let session_manager = std::sync::Arc::new(tokio::sync::RwLock::new(session_manager::SessionManager::new()));
+    let session_manager = std::sync::Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
     Ok(session_manager)
 }
 
