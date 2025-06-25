@@ -620,48 +620,10 @@ impl LauncherClient {
         use std::io::Write;
         use tokio::io::AsyncReadExt;
         
-        // ターミナルをraw modeに設定
-        #[cfg(unix)]
-        let _raw_guard = {
-            use std::os::unix::io::AsRawFd;
-            use std::os::fd::{BorrowedFd, FromRawFd};
-            
-            let stdin_fd = std::io::stdin().as_raw_fd();
-            
-            // SAFETY: stdin_fd は有効なファイルディスクリプタです
-            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-            
-            let original_termios = match nix::sys::termios::tcgetattr(borrowed_fd) {
-                Ok(attrs) => Some(attrs),
-                Err(_) => None,
-            };
-            
-            if let Some(mut termios) = original_termios.clone() {
-                nix::sys::termios::cfmakeraw(&mut termios);
-                let _ = nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &termios);
-            }
-            
-            // Dropで自動復元されるガード
-            struct RawModeGuard {
-                fd: i32,
-                original: Option<nix::sys::termios::Termios>,
-            }
-            impl Drop for RawModeGuard {
-                fn drop(&mut self) {
-                    if let Some(ref original) = self.original {
-                        use std::os::fd::{BorrowedFd, FromRawFd};
-                        // SAFETY: fd は有効なファイルディスクリプタです
-                        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
-                        let _ = nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, original);
-                    }
-                }
-            }
-            
-            RawModeGuard {
-                fd: stdin_fd,
-                original: original_termios,
-            }
-        };
+        // rawモードはmain関数で既に設定済みなので、ここでは設定しない
+        if verbose {
+            eprintln!("📡 Starting stdin to PTY forwarding (raw mode already set by main)");
+        }
         
         let mut stdin = tokio::io::stdin();
         let mut buffer = [0u8; 1024];
@@ -700,8 +662,9 @@ impl LauncherClient {
             }
         }
         
-        #[cfg(unix)]
-        drop(_raw_guard); // 明示的にraw modeを復元
+        if verbose {
+            eprintln!("📡 Stdin to PTY forwarding ended");
+        }
     }
 
     /// 状態更新をメイン接続経由で送信
