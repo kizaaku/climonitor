@@ -64,7 +64,7 @@ impl CliTool for GeminiTool {
         None
     }
 
-    fn validate_args(&self, args: &[String]) -> Result<()> {
+    fn validate_args(&self, _args: &[String]) -> Result<()> {
         // Gemini固有の引数検証（必要に応じて実装）
         // 現在は特に制限なし
         Ok(())

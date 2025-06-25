@@ -17,7 +17,7 @@ pub trait CliTool: Send + Sync {
     fn guess_project_name(&self, args: &[String], working_dir: &Path) -> Option<String>;
     
     /// ツール固有の引数検証
-    fn validate_args(&self, args: &[String]) -> Result<()> {
+    fn validate_args(&self, _args: &[String]) -> Result<()> {
         // デフォルト実装：引数をそのまま受け入れる
         Ok(())
     }

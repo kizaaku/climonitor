@@ -61,7 +61,7 @@ impl CliTool for ClaudeTool {
         None
     }
 
-    fn validate_args(&self, args: &[String]) -> Result<()> {
+    fn validate_args(&self, _args: &[String]) -> Result<()> {
         // Claude固有の引数検証（現在は特に制限なし）
         Ok(())
     }

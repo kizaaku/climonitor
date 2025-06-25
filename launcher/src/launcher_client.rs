@@ -11,7 +11,6 @@ use chrono::Utc;
 
 
 use crate::tool_wrapper::ToolWrapper;
-use crate::session_state::SessionStateDetector;
 use ccmonitor_shared::{LauncherToMonitor, SessionStatus, generate_connection_id};
 
 /// ターミナル状態の自動復元ガード
@@ -29,6 +28,7 @@ pub struct TerminalGuard {
 
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
 pub struct DummyTerminalGuard {
+    #[allow(dead_code)]
     verbose: bool,
 }
 
@@ -303,58 +303,6 @@ impl LauncherClient {
         Ok(())
     }
 
-    /// ターミナルガードを作成（raw mode設定付き）
-    #[cfg(unix)]
-    fn create_terminal_guard(verbose: bool) -> Result<TerminalGuard> {
-        use std::os::unix::io::AsRawFd;
-        use std::os::fd::BorrowedFd;
-        
-        let stdin_fd = std::io::stdin().as_raw_fd();
-        
-        // stdinがターミナルかどうかチェック
-        if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
-            if verbose {
-                eprintln!("🔒 Terminal guard created (non-TTY mode)");
-            }
-            // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
-            let dummy_termios = unsafe { std::mem::zeroed() };
-            return Ok(TerminalGuard {
-                fd: stdin_fd,
-                original: dummy_termios,
-                verbose,
-            });
-        }
-        
-        // SAFETY: stdin_fd は有効なファイルディスクリプタです
-        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-        
-        let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
-            .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
-        
-        // ターミナルをrawモードに設定
-        let mut raw_termios = original_termios.clone();
-        nix::sys::termios::cfmakeraw(&mut raw_termios);
-        nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &raw_termios)
-            .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
-        
-        if verbose {
-            eprintln!("🔒 Terminal guard created with raw mode");
-        }
-        
-        Ok(TerminalGuard {
-            fd: stdin_fd,
-            original: original_termios,
-            verbose,
-        })
-    }
-    
-    #[cfg(not(unix))]
-    fn create_terminal_guard(verbose: bool) -> Result<TerminalGuard> {
-        // 非Unix環境では何もしない
-        Ok(TerminalGuard {
-            verbose,
-        })
-    }
 
     /// PTY 双方向I/Oタスク開始（修正版）
     async fn start_pty_bidirectional_io(
