@@ -54,6 +54,13 @@ async fn main() -> Result<()> {
     let claude_wrapper = ClaudeWrapper::new(claude_args)
         .working_dir(std::env::current_dir()?);
 
+    // ターミナルガード作成（シグナル処理前に作成して復元を保証）
+    #[cfg(unix)]
+    let _terminal_guard = {
+        use ccmonitor_launcher::launcher_client::create_terminal_guard_global;
+        create_terminal_guard_global(verbose)?
+    };
+
     // Launcher クライアントを作成（接続は内部で自動実行）
     let mut launcher = LauncherClient::new(
         claude_wrapper,

@@ -16,14 +16,19 @@ use ccmonitor_shared::{LauncherToMonitor, SessionStatus, generate_connection_id}
 
 /// ターミナル状態の自動復元ガード
 #[cfg(unix)]
-struct TerminalGuard {
+pub struct TerminalGuard {
     fd: i32,
     original: nix::sys::termios::Termios,
     verbose: bool,
 }
 
 #[cfg(not(unix))]
-struct TerminalGuard {
+pub struct TerminalGuard {
+    verbose: bool,
+}
+
+/// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
+pub struct DummyTerminalGuard {
     verbose: bool,
 }
 
@@ -217,8 +222,8 @@ impl LauncherClient {
         // 初期状態メッセージを送信
         Self::send_status_update_async(&self.launcher_id, &self.session_id, SessionStatus::Idle, self.verbose).await;
 
-        // ターミナルガードを作成（スコープを抜ける際に自動的に復元される）
-        let terminal_guard = Self::create_terminal_guard(self.verbose)?;
+        // ターミナルガードはmain関数で作成済み（ここでは作らない）
+        let terminal_guard = DummyTerminalGuard { verbose: self.verbose };
         
         // Claude プロセス起動（PTYを使用してTTY環境を提供）
         let (mut claude_process, pty_master) = self.claude_wrapper.spawn_with_pty()?;
@@ -346,7 +351,7 @@ impl LauncherClient {
     async fn start_pty_bidirectional_io(
         &self, 
         pty_master: Box<dyn MasterPty + Send>,
-        _terminal_guard: TerminalGuard
+        _terminal_guard: DummyTerminalGuard
     ) -> Result<JoinHandle<()>> {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
@@ -374,7 +379,7 @@ impl LauncherClient {
         session_id: String,
         verbose: bool,
         log_file: Option<PathBuf>,
-        _terminal_guard: TerminalGuard,
+        _terminal_guard: DummyTerminalGuard,
     ) {
         // ログファイルを開く
         let log_writer = if let Some(ref log_path) = log_file {
@@ -725,4 +730,57 @@ impl LauncherClient {
             }
         }
     }
+}
+
+/// グローバル用のターミナルガード作成関数（main関数で使用）
+#[cfg(unix)]
+pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
+    use std::os::unix::io::AsRawFd;
+    use std::os::fd::BorrowedFd;
+    
+    let stdin_fd = std::io::stdin().as_raw_fd();
+    
+    // stdinがターミナルかどうかチェック
+    if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+        if verbose {
+            eprintln!("🔒 Terminal guard created (non-TTY mode)");
+        }
+        // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
+        let dummy_termios = unsafe { std::mem::zeroed() };
+        return Ok(TerminalGuard {
+            fd: stdin_fd,
+            original: dummy_termios,
+            verbose,
+        });
+    }
+    
+    // SAFETY: stdin_fd は有効なファイルディスクリプタです
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+    
+    let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
+        .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
+    
+    // ターミナルをrawモードに設定
+    let mut raw_termios = original_termios.clone();
+    nix::sys::termios::cfmakeraw(&mut raw_termios);
+    nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &raw_termios)
+        .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
+    
+    if verbose {
+        eprintln!("🔒 Terminal guard created with raw mode");
+    }
+    
+    Ok(TerminalGuard {
+        fd: stdin_fd,
+        original: original_termios,
+        verbose,
+    })
+}
+
+#[cfg(not(unix))]
+pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
+    // 非Unix環境では何もしない
+    Ok(TerminalGuard {
+        verbose,
+    })
 }
