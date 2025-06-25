@@ -314,6 +314,7 @@ impl LauncherClient {
         let session_id = self.session_id.clone();
         let verbose = self.verbose;
         let log_file = self.log_file.clone();
+        let tool_type = self.tool_wrapper.get_tool_type();
 
         let handle = tokio::spawn(async move {
             Self::handle_pty_bidirectional_io(
@@ -322,6 +323,7 @@ impl LauncherClient {
                 session_id,
                 verbose,
                 log_file,
+                tool_type,
                 _terminal_guard,
             ).await;
         });
@@ -336,6 +338,7 @@ impl LauncherClient {
         session_id: String,
         verbose: bool,
         log_file: Option<PathBuf>,
+        tool_type: crate::cli_tool::CliToolType,
         _terminal_guard: DummyTerminalGuard,
     ) {
         // ログファイルを開く
@@ -387,6 +390,7 @@ impl LauncherClient {
                 session_id.clone(),
                 verbose,
                 log_writer,
+                tool_type,
             ).await;
         });
 
@@ -489,11 +493,12 @@ impl LauncherClient {
         session_id: String,
         verbose: bool,
         mut log_writer: Option<tokio::fs::File>,
+        tool_type: crate::cli_tool::CliToolType,
     ) {
-        use crate::session_state::SessionStateDetector;
+        use crate::state_detector::create_state_detector;
         use ccmonitor_shared::SessionStatus;
         
-        let mut state_detector = SessionStateDetector::new(verbose);
+        let mut state_detector = create_state_detector(tool_type, verbose);
         let mut last_status = SessionStatus::Idle;
         use std::io::Read;
         use tokio::io::AsyncWriteExt;

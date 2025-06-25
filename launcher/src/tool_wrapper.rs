@@ -132,4 +132,13 @@ impl ToolWrapper {
     pub fn get_tool(&self) -> &dyn CliTool {
         self.tool.as_ref()
     }
+    
+    /// ツールタイプを取得
+    pub fn get_tool_type(&self) -> crate::cli_tool::CliToolType {
+        match self.tool.command_name() {
+            "claude" => crate::cli_tool::CliToolType::Claude,
+            "gemini" => crate::cli_tool::CliToolType::Gemini,
+            _ => crate::cli_tool::CliToolType::Claude, // デフォルト
+        }
+    }
 }
