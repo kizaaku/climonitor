@@ -6,15 +6,11 @@ use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
 use portable_pty::MasterPty;
 
-use crate::ansi_utils::clean_for_logging;
-
 use crate::claude_wrapper::ClaudeWrapper;
 use crate::monitor_server::MonitorServer;
-use crate::process_monitor::{ProcessMonitor, ProcessInfo};
 use crate::protocol::{
     LauncherToMonitor, generate_connection_id
 };
-use crate::standard_analyzer::StandardAnalyzer;
 
 /// Launcher クライアント
 pub struct LauncherClient {
@@ -159,8 +155,6 @@ impl LauncherClient {
         // PTYベースの双方向I/O開始（ターミナル設定も含む）
         let pty_handle = self.start_pty_bidirectional_io(pty_master).await?;
 
-        // プロセス監視開始
-        let process_handle = self.start_process_monitoring().await;
 
         if self.verbose {
             println!("👀 Monitoring started for Claude process");
@@ -180,7 +174,6 @@ impl LauncherClient {
 
         // 監視タスクを終了
         pty_handle.abort();
-        process_handle.abort();
 
         match exit_status {
             Ok(status) => {
@@ -231,7 +224,6 @@ impl LauncherClient {
         verbose: bool,
         log_file: Option<PathBuf>,
     ) {
-        let analyzer = StandardAnalyzer::new();
 
         // ログファイルを開く
         let log_writer = if let Some(ref log_path) = log_file {
@@ -294,7 +286,6 @@ impl LauncherClient {
                 pty_reader,
                 verbose,
                 log_writer,
-                analyzer,
             ).await;
         });
 
@@ -325,7 +316,6 @@ impl LauncherClient {
         pty_reader: Box<dyn std::io::Read + Send>,
         verbose: bool,
         mut log_writer: Option<tokio::fs::File>,
-        mut analyzer: StandardAnalyzer,
     ) {
         use std::sync::{Arc, Mutex};
         let pty_reader = Arc::new(Mutex::new(pty_reader));
@@ -357,10 +347,9 @@ impl LauncherClient {
                         println!("📝 [pty→stdout] {}", output.trim());
                     }
 
-                    // ログファイルに書き込み（クリーンアップ済み）
+                    // ログファイルに書き込み
                     if let Some(ref mut writer) = log_writer {
-                        let clean_output = clean_for_logging(&output);
-                        if let Err(e) = writer.write_all(clean_output.as_bytes()).await {
+                        if let Err(e) = writer.write_all(output.as_bytes()).await {
                             if verbose {
                                 eprintln!("⚠️  Failed to write to log file: {}", e);
                             }
@@ -369,12 +358,6 @@ impl LauncherClient {
                             let _ = writer.flush().await;
                         }
                     }
-
-                    // 出力を解析
-                    let _analysis = analyzer.analyze_output(&output, "pty");
-                    
-                    // TODO: Monitor に送信
-                    // このセクションは後で実装
                 }
                 Ok(Err(e)) => {
                     if verbose {
@@ -423,22 +406,6 @@ impl LauncherClient {
                         .copied()
                         .collect();
                     
-                    if verbose && n > 0 {
-                        let display_bytes: Vec<String> = buffer[..n].iter()
-                            .map(|&b| {
-                                if b == 11 {
-                                    format!("VT")
-                                } else if b.is_ascii_graphic() || b == b' ' {
-                                    format!("'{}'", b as char)
-                                } else if b < 32 {
-                                    format!("^{}", (b + 64) as char) // Control character notation
-                                } else {
-                                    format!("{:02X}", b)
-                                }
-                            })
-                            .collect();
-                        println!("📝 [stdin→pty] {} bytes: [{}]", n, display_bytes.join(" "));
-                    }
                     
                     if !filtered_data.is_empty() {
                         if let Err(e) = Self::write_bytes_to_pty(&pty_writer, &filtered_data, verbose).await {
@@ -502,50 +469,6 @@ impl LauncherClient {
 
 
 
-    /// プロセス監視タスク開始
-    async fn start_process_monitoring(&self) -> JoinHandle<()> {
-        let _launcher_id = self.launcher_id.clone();
-        let verbose = self.verbose;
-        let mut process_monitor = ProcessMonitor::new();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-            let mut last_info: Option<ProcessInfo> = None;
-
-            loop {
-                interval.tick().await;
-                
-                let process_info = process_monitor.get_process_info().await;
-                
-                // Only log if there are actual processes or if info has changed
-                let has_activity = process_info.cpu_percent > 0.0 || 
-                                 process_info.memory_mb > 0 || 
-                                 process_info.child_count > 0;
-                
-                let info_changed = match &last_info {
-                    None => has_activity,
-                    Some(last) => {
-                        last.cpu_percent != process_info.cpu_percent ||
-                        last.memory_mb != process_info.memory_mb ||
-                        last.child_count != process_info.child_count
-                    }
-                };
-                
-                if verbose && (has_activity || info_changed) {
-                    println!("📊 Process: CPU {:.1}%, Memory {}MB, Children {}",
-                        process_info.cpu_percent,
-                        process_info.memory_mb,
-                        process_info.child_count
-                    );
-                }
-                
-                last_info = Some(process_info);
-
-                // TODO: Monitor に送信
-                // このセクションは後で実装
-            }
-        })
-    }
 
     /// 切断メッセージ送信
     async fn send_disconnect_message(&mut self) -> Result<()> {

@@ -1,14 +1,11 @@
 use clap::Parser;
 
-mod ansi_utils;
 mod claude_wrapper;
 mod launcher_client;
 mod live_ui;
 mod monitor_server;
-mod process_monitor;
 mod protocol;
 mod session_manager;
-mod standard_analyzer;
 mod unicode_utils;
 
 use monitor_server::MonitorServer;
@@ -153,21 +150,3 @@ async fn try_connect_to_monitor() -> anyhow::Result<std::sync::Arc<tokio::sync::
 }
 
 
-/// 使用方法ヘルプ
-#[allow(dead_code)]
-fn print_usage_examples() {
-    println!("📖 Usage Examples:");
-    println!();
-    println!("  # Start monitor server (live mode)");
-    println!("  ccmonitor --live");
-    println!();
-    println!("  # One-time status check");
-    println!("  ccmonitor --no-tui");
-    println!();
-    println!("  # Start launcher with Claude");
-    println!("  ccmonitor-launcher claude --project myapp");
-    println!();
-    println!("  # Verbose output");
-    println!("  ccmonitor --live --verbose");
-    println!();
-}
