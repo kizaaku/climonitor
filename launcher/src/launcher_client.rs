@@ -10,7 +10,7 @@ use serde_json;
 use chrono::Utc;
 
 
-use crate::claude_wrapper::ClaudeWrapper;
+use crate::tool_wrapper::ToolWrapper;
 use crate::session_state::SessionStateDetector;
 use ccmonitor_shared::{LauncherToMonitor, SessionStatus, generate_connection_id};
 
@@ -77,7 +77,7 @@ impl Drop for TerminalGuard {
 pub struct LauncherClient {
     launcher_id: String,
     socket_stream: Option<UnixStream>,
-    claude_wrapper: ClaudeWrapper,
+    tool_wrapper: ToolWrapper,
     project_name: Option<String>,
     session_id: String,
     verbose: bool,
@@ -87,19 +87,19 @@ pub struct LauncherClient {
 impl LauncherClient {
     /// 新しいLauncherClientを作成
     pub async fn new(
-        claude_wrapper: ClaudeWrapper,
+        tool_wrapper: ToolWrapper,
         socket_path: Option<std::path::PathBuf>,
         verbose: bool,
         log_file: Option<PathBuf>,
     ) -> Result<Self> {
         let launcher_id = generate_connection_id();
         let session_id = generate_connection_id();
-        let project_name = claude_wrapper.guess_project_name();
+        let project_name = tool_wrapper.guess_project_name();
 
         let mut client = Self {
             launcher_id,
             socket_stream: None,
-            claude_wrapper,
+            tool_wrapper,
             project_name,
             session_id,
             verbose,
@@ -160,8 +160,8 @@ impl LauncherClient {
             let connect_msg = LauncherToMonitor::Connect {
                 launcher_id: self.launcher_id.clone(),
                 project: self.project_name.clone(),
-                claude_args: self.claude_wrapper.get_args().to_vec(),
-                working_dir: self.claude_wrapper.get_working_dir().cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                claude_args: self.tool_wrapper.get_args().to_vec(),
+                working_dir: self.tool_wrapper.get_working_dir().cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
                 timestamp: Utc::now(),
             };
             
@@ -208,7 +208,7 @@ impl LauncherClient {
     /// Claude プロセス起動・監視（修正版）
     pub async fn run_claude(&mut self) -> Result<()> {
         if self.verbose {
-            eprintln!("🚀 Starting Claude: {}", self.claude_wrapper.to_command_string());
+            eprintln!("🚀 Starting CLI tool: {}", self.tool_wrapper.to_command_string());
         }
 
         // Monitor に接続できていない場合は単純にClaude実行
@@ -216,7 +216,7 @@ impl LauncherClient {
             if self.verbose {
                 eprintln!("🔄 Running Claude without monitoring (monitor not connected)");
             }
-            return self.claude_wrapper.run_directly().await;
+            return self.tool_wrapper.run_directly().await;
         }
 
         // 接続メッセージを送信
@@ -235,7 +235,7 @@ impl LauncherClient {
         let terminal_guard = DummyTerminalGuard { verbose: self.verbose };
         
         // Claude プロセス起動（PTYを使用してTTY環境を提供）
-        let (mut claude_process, pty_master) = self.claude_wrapper.spawn_with_pty()?;
+        let (mut claude_process, pty_master) = self.tool_wrapper.spawn_with_pty()?;
         
         // PTYベースの双方向I/O開始
         let pty_handle = self.start_pty_bidirectional_io(pty_master, terminal_guard).await?;

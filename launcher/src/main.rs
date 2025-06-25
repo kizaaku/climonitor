@@ -3,13 +3,14 @@ use clap::{Arg, Command};
 
 // lib crate から import
 use ccmonitor_launcher::launcher_client::LauncherClient;
-use ccmonitor_launcher::claude_wrapper::ClaudeWrapper;
+use ccmonitor_launcher::tool_wrapper::ToolWrapper;
+use ccmonitor_launcher::cli_tool::{CliToolType, CliToolFactory};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let matches = Command::new("ccmonitor-launcher")
         .version("0.1.0")
-        .about("Launch Claude Code with real-time session monitoring")
+        .about("Launch Claude Code or Gemini CLI with real-time session monitoring")
         .arg(
             Arg::new("verbose")
                 .short('v')
@@ -20,12 +21,12 @@ async fn main() -> Result<()> {
         .arg(
             Arg::new("log_file")
                 .long("log-file")
-                .help("Log file path to save Claude's output")
+                .help("Log file path to save CLI tool output")
                 .value_name("FILE"),
         )
         .arg(
-            Arg::new("claude_args")
-                .help("Arguments to pass to Claude Code")
+            Arg::new("cli_args")
+                .help("CLI tool and arguments (e.g., 'claude --help' or 'gemini chat')")
                 .num_args(0..)
                 .trailing_var_arg(true)
                 .allow_hyphen_values(true),
@@ -34,24 +35,34 @@ async fn main() -> Result<()> {
 
     let verbose = matches.get_flag("verbose");
     let log_file = matches.get_one::<String>("log_file").map(std::path::PathBuf::from);
-    let mut claude_args: Vec<String> = matches
-        .get_many::<String>("claude_args")
+    let cli_args: Vec<String> = matches
+        .get_many::<String>("cli_args")
         .unwrap_or_default()
         .map(|s| s.to_string())
         .collect();
 
-    // 最初の引数が "claude" の場合は除去（重複を避ける）
-    if claude_args.first().map(|s| s.as_str()) == Some("claude") {
-        claude_args.remove(0);
-    }
+    // CLI ツールタイプを判定
+    let (tool_type, tool_args) = if let Some(first_arg) = cli_args.first() {
+        if let Some(cli_tool_type) = CliToolType::from_command(first_arg) {
+            (cli_tool_type, cli_args[1..].to_vec())
+        } else {
+            // デフォルトはClaude（後方互換性）
+            (CliToolType::Claude, cli_args)
+        }
+    } else {
+        // 引数なしの場合はClaude
+        (CliToolType::Claude, vec![])
+    };
 
     if verbose {
         println!("🔧 ccmonitor-launcher starting...");
-        println!("📝 Claude args: {:?}", claude_args);
+        println!("🛠️  Tool: {:?}", tool_type);
+        println!("📝 Args: {:?}", tool_args);
     }
 
-    // Claude wrapper を作成
-    let claude_wrapper = ClaudeWrapper::new(claude_args)
+    // ツールを作成
+    let cli_tool = CliToolFactory::create_tool(tool_type);
+    let tool_wrapper = ToolWrapper::new(cli_tool, tool_args)
         .working_dir(std::env::current_dir()?);
 
     // ターミナルガード作成（シグナル処理前に作成して復元を保証）
@@ -63,7 +74,7 @@ async fn main() -> Result<()> {
 
     // Launcher クライアントを作成（接続は内部で自動実行）
     let mut launcher = LauncherClient::new(
-        claude_wrapper,
+        tool_wrapper,
         None, // デフォルトソケットパスを使用
         verbose,
         log_file,
@@ -75,17 +86,17 @@ async fn main() -> Result<()> {
         let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         
-        // Claude プロセス実行をシグナル処理と並行して実行
+        // CLI ツール プロセス実行をシグナル処理と並行して実行
         tokio::select! {
             result = launcher.run_claude() => {
                 match result {
                     Ok(_) => {
                         if verbose {
-                            println!("✅ Claude finished successfully");
+                            println!("✅ CLI tool finished successfully");
                         }
                     }
                     Err(e) => {
-                        eprintln!("❌ Claude execution failed: {}", e);
+                        eprintln!("❌ CLI tool execution failed: {}", e);
                         #[cfg(unix)]
                         {
                             drop(_terminal_guard); // ターミナル設定を明示的に復元
@@ -126,11 +137,11 @@ async fn main() -> Result<()> {
         match launcher.run_claude().await {
             Ok(_) => {
                 if verbose {
-                    println!("✅ Claude finished successfully");
+                    println!("✅ CLI tool finished successfully");
                 }
             }
             Err(e) => {
-                eprintln!("❌ Claude execution failed: {}", e);
+                eprintln!("❌ CLI tool execution failed: {}", e);
                 #[cfg(unix)]
                 {
                     drop(_terminal_guard); // ターミナル設定を明示的に復元
