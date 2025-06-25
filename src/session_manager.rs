@@ -185,14 +185,21 @@ impl SessionManager {
         projects
     }
 
-    /// 統計情報取得
+    /// 統計情報取得（unknownプロジェクトを除外）
     pub fn get_stats(&self) -> SessionStats {
-        let active_launchers = self.get_active_launchers().len();
-        let total_sessions = self.sessions.len();
-        let active_sessions = self.get_active_sessions().len();
+        let sessions_by_project = self.get_sessions_by_project();
+        
+        // unknownプロジェクトを除外した統計
+        let filtered_sessions: Vec<&SessionInfo> = sessions_by_project
+            .iter()
+            .filter(|(project_name, _)| *project_name != "unknown")
+            .flat_map(|(_, sessions)| sessions.iter().copied())
+            .collect();
+            
+        let active_sessions = filtered_sessions.len();
+        let total_sessions = active_sessions; // フィルタリング後のセッション数
         
         SessionStats {
-            active_launchers,
             total_sessions,
             active_sessions,
         }
@@ -214,7 +221,6 @@ impl SessionManager {
 /// 統計情報
 #[derive(Debug, Clone)]
 pub struct SessionStats {
-    pub active_launchers: usize,
     pub total_sessions: usize,
     pub active_sessions: usize,
 }
@@ -254,7 +260,6 @@ mod tests {
         let manager = SessionManager::new();
         let stats = manager.get_stats();
         
-        assert_eq!(stats.active_launchers, 0);
         assert_eq!(stats.total_sessions, 0);
         assert_eq!(stats.active_sessions, 0);
     }

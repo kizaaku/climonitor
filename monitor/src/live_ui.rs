@@ -72,10 +72,7 @@ impl LiveUI {
         // ヘッダー
         self.render_header().await;
 
-        // 接続状況
-        self.render_connections().await;
-
-        // セッション詳細
+        // セッション詳細（unknown project は除外）
         self.render_sessions().await;
 
         // フッター
@@ -87,65 +84,35 @@ impl LiveUI {
         let stats = self.session_manager.read().await.get_stats();
         
         println!("🔥 Claude Session Monitor - Live Mode");
-        println!("📊 Launchers: {} | Sessions: {} (Active: {})", 
-            stats.active_launchers, 
+        println!("📊 Sessions: {} (Active: {})", 
             stats.total_sessions, 
             stats.active_sessions
         );
         println!("{}", "═".repeat(80));
     }
 
-    /// 接続状況描画
-    async fn render_connections(&self) {
-        let session_manager = self.session_manager.read().await;
-        let launchers = session_manager.get_active_launchers();
-
-        if launchers.is_empty() {
-            println!("⏳ No launcher connections");
-            println!("💡 Start with: ccmonitor-launcher claude");
-            println!();
-            return;
-        }
-
-        println!("🔗 Active Launchers:");
-        for launcher in launchers {
-            let project_str = launcher.project.as_deref().unwrap_or("(no project)");
-            let elapsed = format_duration_since(launcher.last_activity);
-            let status_icon = match launcher.status {
-                LauncherStatus::Connected => "🟡",
-                LauncherStatus::Active => "🟢",
-                LauncherStatus::Idle => "⚪",
-                LauncherStatus::Disconnected => "🔴",
-            };
-
-            println!("  {} {} | {} | {}", 
-                status_icon,
-                truncate_str(&launcher.id, 12),
-                truncate_str(project_str, 20),
-                elapsed
-            );
-
-            if self.verbose {
-                let args_str = launcher.claude_args.join(" ");
-                println!("     Args: {}", truncate_str(&args_str, 60));
-            }
-        }
-        println!();
-    }
 
     /// セッション詳細描画
     async fn render_sessions(&self) {
         let session_manager = self.session_manager.read().await;
         let sessions_by_project = session_manager.get_sessions_by_project();
 
-        if sessions_by_project.is_empty() {
-            println!("📭 No active sessions");
+        // unknownプロジェクトを除外
+        let filtered_sessions: std::collections::HashMap<String, Vec<_>> = sessions_by_project
+            .into_iter()
+            .filter(|(project_name, _)| project_name != "unknown")
+            .collect();
+
+        if filtered_sessions.is_empty() {
+            println!("⏳ No launcher connections");
+            println!("💡 Start with: ccmonitor-launcher claude");
+            println!();
             return;
         }
 
         println!("📋 Active Sessions:");
         
-        for (project_name, sessions) in sessions_by_project {
+        for (project_name, sessions) in filtered_sessions {
             println!("  📁 {}:", project_name);
             
             for session in sessions {
@@ -242,21 +209,26 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
     let stats = session_manager.get_stats();
     let sessions_by_project = session_manager.get_sessions_by_project();
 
+    // unknownプロジェクトを除外
+    let filtered_sessions: std::collections::HashMap<String, Vec<_>> = sessions_by_project
+        .into_iter()
+        .filter(|(project_name, _)| project_name != "unknown")
+        .collect();
+
     println!("📊 Claude Session Monitor - Snapshot");
-    println!("Launchers: {} | Sessions: {} (Active: {})", 
-        stats.active_launchers, 
+    println!("Sessions: {} (Active: {})", 
         stats.total_sessions, 
         stats.active_sessions
     );
     println!("{}", "═".repeat(50));
 
-    if sessions_by_project.is_empty() {
+    if filtered_sessions.is_empty() {
         println!("🔍 No active sessions found");
         println!("💡 Start with: ccmonitor-launcher claude");
         return;
     }
 
-    for (project_name, sessions) in sessions_by_project {
+    for (project_name, sessions) in filtered_sessions {
         println!("\n📁 Project: {}", project_name);
         println!("   Sessions: {}", sessions.len());
         
