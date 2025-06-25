@@ -14,6 +14,60 @@ use crate::claude_wrapper::ClaudeWrapper;
 use crate::session_state::SessionStateDetector;
 use ccmonitor_shared::{LauncherToMonitor, SessionStatus, generate_connection_id};
 
+/// ターミナル状態の自動復元ガード
+#[cfg(unix)]
+struct TerminalGuard {
+    fd: i32,
+    original: nix::sys::termios::Termios,
+    verbose: bool,
+}
+
+#[cfg(not(unix))]
+struct TerminalGuard {
+    verbose: bool,
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::BorrowedFd;
+            
+            // ターミナルかどうかチェック
+            if !nix::unistd::isatty(self.fd).unwrap_or(false) {
+                if self.verbose {
+                    eprintln!("🔓 Terminal guard dropped (non-TTY)");
+                }
+                return;
+            }
+            
+            if self.verbose {
+                eprintln!("🔓 Restoring terminal settings");
+            }
+            
+            // SAFETY: fd は有効なファイルディスクリプタです
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
+            
+            if let Err(e) = nix::sys::termios::tcsetattr(
+                borrowed_fd, 
+                nix::sys::termios::SetArg::TCSANOW, 
+                &self.original
+            ) {
+                if self.verbose {
+                    eprintln!("⚠️  Failed to restore terminal: {}", e);
+                }
+            }
+        }
+        
+        #[cfg(not(unix))]
+        {
+            if self.verbose {
+                eprintln!("🔓 Terminal guard dropped (no-op on non-Unix)");
+            }
+        }
+    }
+}
+
 /// Launcher クライアント
 pub struct LauncherClient {
     launcher_id: String,
@@ -27,7 +81,7 @@ pub struct LauncherClient {
 
 impl LauncherClient {
     /// 新しいLauncherClientを作成
-    pub fn new(
+    pub async fn new(
         claude_wrapper: ClaudeWrapper,
         socket_path: Option<std::path::PathBuf>,
         verbose: bool,
@@ -48,13 +102,13 @@ impl LauncherClient {
         };
 
         // Monitor サーバーに接続を試行
-        client.try_connect_to_monitor(socket_path)?;
+        client.try_connect_to_monitor(socket_path).await?;
 
         Ok(client)
     }
 
     /// Monitor サーバーへの接続を試行
-    fn try_connect_to_monitor(&mut self, socket_path: Option<PathBuf>) -> Result<()> {
+    async fn try_connect_to_monitor(&mut self, socket_path: Option<PathBuf>) -> Result<()> {
         let socket_path = socket_path.unwrap_or_else(|| {
             std::env::var("CCMONITOR_SOCKET_PATH")
                 .unwrap_or_else(|_| {
@@ -72,9 +126,9 @@ impl LauncherClient {
             eprintln!("🔍 Socket path exists: {}", socket_path.exists());
         }
         
-        match std::os::unix::net::UnixStream::connect(&socket_path) {
+        match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(stream) => {
-                self.socket_stream = Some(tokio::net::UnixStream::from_std(stream)?);
+                self.socket_stream = Some(stream);
                 if self.verbose {
                     eprintln!("🔗 Connected to monitor server at {}", socket_path.display());
                 }
@@ -164,14 +218,13 @@ impl LauncherClient {
         Self::send_status_update_async(&self.launcher_id, &self.session_id, SessionStatus::Idle, self.verbose).await;
 
         // ターミナルガードを作成（スコープを抜ける際に自動的に復元される）
-        // TODO: Re-enable terminal guard once import issue is resolved
-        let terminal_guard: Option<()> = None;
+        let terminal_guard = Self::create_terminal_guard(self.verbose)?;
         
         // Claude プロセス起動（PTYを使用してTTY環境を提供）
         let (mut claude_process, pty_master) = self.claude_wrapper.spawn_with_pty()?;
         
         // PTYベースの双方向I/O開始
-        let pty_handle = self.start_pty_bidirectional_io(pty_master, terminal_guard.clone()).await?;
+        let pty_handle = self.start_pty_bidirectional_io(pty_master, terminal_guard).await?;
 
         if self.verbose {
             eprintln!("👀 Monitoring started for Claude process");
@@ -181,7 +234,7 @@ impl LauncherClient {
         let mut wait_task = tokio::task::spawn_blocking(move || claude_process.wait());
         
         // シグナルハンドリングとリサイズ処理
-        let exit_status = self.wait_with_signals(&mut wait_task, terminal_guard.clone()).await;
+        let exit_status = self.wait_with_signals(&mut wait_task).await;
 
         // PTYタスクを終了
         pty_handle.abort();
@@ -236,11 +289,64 @@ impl LauncherClient {
         Ok(())
     }
 
+    /// ターミナルガードを作成（raw mode設定付き）
+    #[cfg(unix)]
+    fn create_terminal_guard(verbose: bool) -> Result<TerminalGuard> {
+        use std::os::unix::io::AsRawFd;
+        use std::os::fd::BorrowedFd;
+        
+        let stdin_fd = std::io::stdin().as_raw_fd();
+        
+        // stdinがターミナルかどうかチェック
+        if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+            if verbose {
+                eprintln!("🔒 Terminal guard created (non-TTY mode)");
+            }
+            // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
+            let dummy_termios = unsafe { std::mem::zeroed() };
+            return Ok(TerminalGuard {
+                fd: stdin_fd,
+                original: dummy_termios,
+                verbose,
+            });
+        }
+        
+        // SAFETY: stdin_fd は有効なファイルディスクリプタです
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+        
+        let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
+            .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
+        
+        // ターミナルをrawモードに設定
+        let mut raw_termios = original_termios.clone();
+        nix::sys::termios::cfmakeraw(&mut raw_termios);
+        nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &raw_termios)
+            .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
+        
+        if verbose {
+            eprintln!("🔒 Terminal guard created with raw mode");
+        }
+        
+        Ok(TerminalGuard {
+            fd: stdin_fd,
+            original: original_termios,
+            verbose,
+        })
+    }
+    
+    #[cfg(not(unix))]
+    fn create_terminal_guard(verbose: bool) -> Result<TerminalGuard> {
+        // 非Unix環境では何もしない
+        Ok(TerminalGuard {
+            verbose,
+        })
+    }
+
     /// PTY 双方向I/Oタスク開始（修正版）
     async fn start_pty_bidirectional_io(
         &self, 
         pty_master: Box<dyn MasterPty + Send>,
-        terminal_guard: Option<()>
+        _terminal_guard: TerminalGuard
     ) -> Result<JoinHandle<()>> {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
@@ -254,7 +360,7 @@ impl LauncherClient {
                 session_id,
                 verbose,
                 log_file,
-                terminal_guard,
+                _terminal_guard,
             ).await;
         });
 
@@ -268,7 +374,7 @@ impl LauncherClient {
         session_id: String,
         verbose: bool,
         log_file: Option<PathBuf>,
-        _terminal_guard: Option<()>,
+        _terminal_guard: TerminalGuard,
     ) {
         // ログファイルを開く
         let log_writer = if let Some(ref log_path) = log_file {
@@ -349,8 +455,7 @@ impl LauncherClient {
     #[cfg(unix)]
     async fn wait_with_signals(
         &self, 
-        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>,
-        terminal_guard: Option<()>
+        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>
     ) -> Result<portable_pty::ExitStatus> {
         let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
         
@@ -390,8 +495,7 @@ impl LauncherClient {
     #[cfg(not(unix))]
     async fn wait_with_signals(
         &self, 
-        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>,
-        _terminal_guard: Option<()>
+        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>
     ) -> Result<portable_pty::ExitStatus> {
         tokio::select! {
             result = &mut *wait_task => {
@@ -487,13 +591,56 @@ impl LauncherClient {
         }
     }
 
-    /// Stdin入力をPTYに転送（シンプル版）
+    /// Stdin入力をPTYに転送（Raw mode対応版）
     async fn handle_stdin_to_pty_simple(
         mut pty_writer: Box<dyn std::io::Write + Send>,
         verbose: bool,
     ) {
         use std::io::Write;
         use tokio::io::AsyncReadExt;
+        
+        // ターミナルをraw modeに設定
+        #[cfg(unix)]
+        let _raw_guard = {
+            use std::os::unix::io::AsRawFd;
+            use std::os::fd::{BorrowedFd, FromRawFd};
+            
+            let stdin_fd = std::io::stdin().as_raw_fd();
+            
+            // SAFETY: stdin_fd は有効なファイルディスクリプタです
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+            
+            let original_termios = match nix::sys::termios::tcgetattr(borrowed_fd) {
+                Ok(attrs) => Some(attrs),
+                Err(_) => None,
+            };
+            
+            if let Some(mut termios) = original_termios.clone() {
+                nix::sys::termios::cfmakeraw(&mut termios);
+                let _ = nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &termios);
+            }
+            
+            // Dropで自動復元されるガード
+            struct RawModeGuard {
+                fd: i32,
+                original: Option<nix::sys::termios::Termios>,
+            }
+            impl Drop for RawModeGuard {
+                fn drop(&mut self) {
+                    if let Some(ref original) = self.original {
+                        use std::os::fd::{BorrowedFd, FromRawFd};
+                        // SAFETY: fd は有効なファイルディスクリプタです
+                        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
+                        let _ = nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, original);
+                    }
+                }
+            }
+            
+            RawModeGuard {
+                fd: stdin_fd,
+                original: original_termios,
+            }
+        };
         
         let mut stdin = tokio::io::stdin();
         let mut buffer = [0u8; 1024];
@@ -531,6 +678,9 @@ impl LauncherClient {
                 }
             }
         }
+        
+        #[cfg(unix)]
+        drop(_raw_guard); // 明示的にraw modeを復元
     }
 
     /// 非同期でステータス更新をモニターサーバーに送信

@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
         None, // デフォルトソケットパスを使用
         verbose,
         log_file,
-    )?;
+    ).await?;
 
     // SIGINT/SIGTERM ハンドラーを設定してターミナル復元を保証
     #[cfg(unix)]

@@ -92,15 +92,15 @@ impl ClaudeWrapper {
             });
         cmd.cwd(working_dir);
 
-        // // 環境変数を設定してClaude Codeが適切にPTYを認識できるようにする
-        // cmd.env("TERM", "xterm-256color");
-        // cmd.env("COLORTERM", "truecolor");
-        // cmd.env("FORCE_COLOR", "1");
+        // 環境変数を設定してClaude Codeが適切にPTYを認識できるようにする
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("FORCE_COLOR", "1");
 
-        // // TTY環境であることを明示
-        // if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
-        //     cmd.env("TERM_PROGRAM", term_program);
-        // }
+        // TTY環境であることを明示
+        if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
+            cmd.env("TERM_PROGRAM", term_program);
+        }
 
         // // デバッグログを有効化
         //cmd.env("ANTHROPIC_LOG", "debug");
