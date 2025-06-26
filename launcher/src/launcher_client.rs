@@ -9,7 +9,6 @@ use portable_pty::MasterPty;
 use serde_json;
 use chrono::Utc;
 use crate::state_detector::StateDetector;
-use std::io::Write;
 
 
 use crate::tool_wrapper::ToolWrapper;
@@ -86,12 +85,6 @@ pub struct LauncherClient {
     log_file: Option<PathBuf>,
 }
 
-/// RAWモード対応のデバッグ出力（改行を正しく処理）
-fn debug_println_raw(msg: &str) {
-    let mut stderr = std::io::stderr();
-    let _ = write!(stderr, "\r\n{}\r\n", msg);
-    let _ = stderr.flush();
-}
 
 impl LauncherClient {
     /// 新しいLauncherClientを作成
@@ -642,52 +635,6 @@ impl LauncherClient {
         }
     }
 
-    /// 状態更新をメイン接続経由で送信
-    async fn send_status_update_via_main_connection(
-        socket_stream: &mut Option<UnixStream>,
-        launcher_id: &str,
-        session_id: &str,
-        status: SessionStatus,
-        detector: &dyn StateDetector,
-        verbose: bool,
-    ) {
-        if let Some(ref mut stream) = socket_stream {
-            let update_msg = LauncherToMonitor::StateUpdate {
-                launcher_id: launcher_id.to_string(),
-                session_id: session_id.to_string(),
-                status: status.clone(),
-                ui_execution_context: detector.get_ui_execution_context(),
-                timestamp: Utc::now(),
-            };
-            
-            if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
-                if let Err(e) = stream.write_all(&msg_bytes).await {
-                    if verbose {
-                        eprintln!("⚠️  Failed to send status update: {}", e);
-                    }
-                    return;
-                }
-                if let Err(e) = stream.write_all(b"\n").await {
-                    if verbose {
-                        eprintln!("⚠️  Failed to send status update newline: {}", e);
-                    }
-                    return;
-                }
-                if let Err(e) = stream.flush().await {
-                    if verbose {
-                        eprintln!("⚠️  Failed to flush status update: {}", e);
-                    }
-                    return;
-                }
-                
-                if verbose {
-                    eprintln!("📤 Sent status update: {:?}", status);
-                }
-            }
-        } else if verbose {
-            eprintln!("⚠️  No main connection available for status update");
-        }
-    }
 
     /// 非同期でステータス更新をモニターサーバーに送信（フォールバック用）
     async fn send_status_update_async(

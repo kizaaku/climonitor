@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 
 use crate::session_manager::SessionManager;
 use crate::unicode_utils::truncate_str;
-use ccmonitor_shared::LauncherStatus;
 
 /// ライブUI管理
 pub struct LiveUI {

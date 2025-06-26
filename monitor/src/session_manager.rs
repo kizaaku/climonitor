@@ -206,11 +206,6 @@ impl SessionManager {
         }
     }
 
-    /// launcher ID からセッションを検索（簡易版）
-    fn find_launcher_for_session(&self, _session_id: &str) -> Option<String> {
-        // TODO: より精密なマッピング実装
-        self.launchers.keys().next().cloned()
-    }
 
     /// 古いセッションのクリーンアップ
     pub fn cleanup_old_sessions(&mut self) {
@@ -229,7 +224,7 @@ pub struct SessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::generate_connection_id;
+    use ccmonitor_shared::generate_connection_id;
 
     #[test]
     fn test_launcher_lifecycle() {
