@@ -5,6 +5,7 @@ use crate::session_state::SessionState;
 use crate::state_detector::{StateDetector, StatePatterns};
 use ccmonitor_shared::SessionStatus;
 use std::io::Write;
+use std::time::{Duration, Instant};
 
 /// RAWモード対応のデバッグ出力（改行を正しく処理）
 fn debug_println_raw(msg: &str) {
@@ -20,6 +21,7 @@ pub struct ScreenStateDetector {
     ui_execution_context: Option<String>,
     patterns: StatePatterns,
     verbose: bool,
+    last_busy_time: Option<Instant>,
 }
 
 impl ScreenStateDetector {
@@ -34,6 +36,7 @@ impl ScreenStateDetector {
             ui_execution_context: None,
             patterns,
             verbose,
+            last_busy_time: None,
         }
     }
 
@@ -67,6 +70,25 @@ impl ScreenStateDetector {
 
             // UI boxの内容から状態を判定
             if let Some(state) = self.analyze_ui_box_content(latest_box) {
+                // Busyからの遷移に100ms遅延を適用
+                if self.current_state == SessionState::Busy && state != SessionState::Busy {
+                    let now = Instant::now();
+                    if let Some(busy_time) = self.last_busy_time {
+                        if now.duration_since(busy_time) < Duration::from_millis(100) {
+                            if self.verbose {
+                                debug_println_raw(&format!("⏱️  [DELAY_TRANSITION] Delaying {} → {} ({}ms elapsed)", 
+                                    self.current_state, state, now.duration_since(busy_time).as_millis()));
+                            }
+                            return self.current_state.clone();
+                        }
+                    }
+                }
+
+                // Busyに遷移する際の時刻を記録
+                if state == SessionState::Busy && self.current_state != SessionState::Busy {
+                    self.last_busy_time = Some(Instant::now());
+                }
+
                 if self.verbose && state != self.current_state {
                     debug_println_raw(&format!("🎯 [STATE_DETECTED] {} → {}", self.current_state, state));
                 }
