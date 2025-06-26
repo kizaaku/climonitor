@@ -7,3 +7,6 @@ pub mod session_state;
 pub mod state_detector;
 pub mod claude_state_detector;
 pub mod gemini_state_detector;
+pub mod screen_buffer;
+pub mod screen_state_detector;
+pub mod screen_claude_detector;

@@ -132,6 +132,13 @@ impl LiveUI {
                 } else {
                     String::new()
                 };
+
+                // Show UI execution context if available (実行状況の短縮表示)
+                let ui_exec_display = if let Some(ref ui_context) = session.ui_execution_context {
+                    format!(" {}", ui_context)
+                } else {
+                    String::new()
+                };
                 
                 let execution_indicator = if session.is_waiting_for_execution {
                     " ⏳"
@@ -139,14 +146,15 @@ impl LiveUI {
                     ""
                 };
 
-                println!("    {} {}{} {} | {}{}{}", 
+                println!("    {} {}{} {} | {}{}{}{}", 
                     status_icon,
                     status_label,
                     execution_indicator,
                     truncate_str(&session.id, 12),
                     elapsed,
                     confidence_str,
-                    context_display
+                    context_display,
+                    ui_exec_display
                 );
 
                 // 最新メッセージ表示

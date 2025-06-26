@@ -8,6 +8,8 @@ use tokio::task::JoinHandle;
 use portable_pty::MasterPty;
 use serde_json;
 use chrono::Utc;
+use crate::state_detector::StateDetector;
+use std::io::Write;
 
 
 use crate::tool_wrapper::ToolWrapper;
@@ -82,6 +84,13 @@ pub struct LauncherClient {
     session_id: String,
     verbose: bool,
     log_file: Option<PathBuf>,
+}
+
+/// RAWモード対応のデバッグ出力（改行を正しく処理）
+fn debug_println_raw(msg: &str) {
+    let mut stderr = std::io::stderr();
+    let _ = write!(stderr, "\r\n{}\r\n", msg);
+    let _ = stderr.flush();
 }
 
 impl LauncherClient {
@@ -228,8 +237,21 @@ impl LauncherClient {
             eprintln!("✅ Connect message sent successfully");
         }
 
-        // 初期状態メッセージを送信
-        Self::send_status_update_via_main_connection(&mut self.socket_stream, &self.launcher_id, &self.session_id, SessionStatus::Idle, self.verbose).await;
+        // 初期状態メッセージを送信（detector無しなのでNoneで）
+        if let Some(ref mut stream) = self.socket_stream {
+            let update_msg = LauncherToMonitor::StateUpdate {
+                launcher_id: self.launcher_id.clone(),
+                session_id: self.session_id.clone(),
+                status: SessionStatus::Idle,
+                ui_execution_context: None,
+                timestamp: Utc::now(),
+            };
+            
+            if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
+                let _ = stream.write_all(&msg_bytes).await;
+                let _ = stream.write_all(b"\n").await;
+            }
+        }
 
         // ターミナルガードはmain関数で作成済み（ここでは作らない）
         let terminal_guard = DummyTerminalGuard { verbose: self.verbose };
@@ -545,7 +567,7 @@ impl LauncherClient {
                             last_status = new_status.clone();
                             
                             // モニターサーバーに状態更新を送信（ベストエフォート）
-                            Self::send_status_update_async(&launcher_id, &session_id, new_status, verbose).await;
+                            Self::send_status_update_async(&launcher_id, &session_id, new_status, &*state_detector, verbose).await;
                         }
                     }
                     
@@ -626,6 +648,7 @@ impl LauncherClient {
         launcher_id: &str,
         session_id: &str,
         status: SessionStatus,
+        detector: &dyn StateDetector,
         verbose: bool,
     ) {
         if let Some(ref mut stream) = socket_stream {
@@ -633,6 +656,7 @@ impl LauncherClient {
                 launcher_id: launcher_id.to_string(),
                 session_id: session_id.to_string(),
                 status: status.clone(),
+                ui_execution_context: detector.get_ui_execution_context(),
                 timestamp: Utc::now(),
             };
             
@@ -670,6 +694,7 @@ impl LauncherClient {
         launcher_id: &str,
         session_id: &str,
         status: SessionStatus,
+        detector: &dyn StateDetector,
         verbose: bool,
     ) {
         // 新しい接続でステータス更新を送信（ベストエフォート）
@@ -687,6 +712,7 @@ impl LauncherClient {
                     launcher_id: launcher_id.to_string(),
                     session_id: session_id.to_string(),
                     status: status.clone(),
+                    ui_execution_context: detector.get_ui_execution_context(),
                     timestamp: Utc::now(),
                 };
                 

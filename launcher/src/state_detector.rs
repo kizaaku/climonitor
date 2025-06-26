@@ -3,6 +3,14 @@
 use crate::session_state::SessionState;
 use ccmonitor_shared::SessionStatus;
 use std::collections::VecDeque;
+use std::io::Write;
+
+/// RAWモード対応のデバッグ出力（改行を正しく処理）
+fn debug_println_raw(msg: &str) {
+    let mut stderr = std::io::stderr();
+    let _ = write!(stderr, "\r\n{}\r\n", msg);
+    let _ = stderr.flush();
+}
 
 /// UIブロック（╭╮╰╯で囲まれた部分）の解析結果
 #[derive(Debug)]
@@ -47,6 +55,9 @@ pub trait StateDetector: Send + Sync {
 
     /// デバッグ用：現在のバッファを表示
     fn debug_buffer(&self);
+
+    /// UI実行コンテキストを取得（数文字表示用）
+    fn get_ui_execution_context(&self) -> Option<String>;
 }
 
 /// 基本的な状態検出器の実装
@@ -61,6 +72,8 @@ pub struct BaseStateDetector {
     verbose: bool,
     /// 状態検出パターン
     patterns: StatePatterns,
+    /// UI実行コンテキスト（数文字の表示用）
+    ui_execution_context: Option<String>,
 }
 
 impl BaseStateDetector {
@@ -71,26 +84,27 @@ impl BaseStateDetector {
             buffer_size: 20,
             verbose,
             patterns,
+            ui_execution_context: None,
         }
     }
 
     /// 20行バッファ全体から状態を検出
-    fn detect_state_from_buffer(&self) -> SessionState {
+    fn detect_state_from_buffer(&mut self) -> SessionState {
         if self.raw_buffer.is_empty() {
             return self.current_state.clone();
         }
 
         if self.verbose {
-            eprintln!("🔍 [BUFFER_ANALYSIS] Processing {} lines as whole buffer", self.raw_buffer.len());
+            debug_println_raw(&format!("🔍 [BUFFER_ANALYSIS] Processing {} lines as whole buffer", self.raw_buffer.len()));
         }
 
         // バッファ全体を一括でスマートフィルタリング
         let filtered_buffer = self.smart_filter_buffer();
 
         if self.verbose {
-            eprintln!("📜 [FILTERED_BUFFER] After filtering:");
+            debug_println_raw("📜 [FILTERED_BUFFER] After filtering:");
             for (i, line) in filtered_buffer.iter().enumerate() {
-                eprintln!("  {:2}: {}", i + 1, line);
+                debug_println_raw(&format!("  {:2}: {}", i + 1, line));
             }
         }
 
@@ -99,7 +113,7 @@ impl BaseStateDetector {
     }
 
     /// バッファ全体を一括でスマートフィルタリング
-    fn smart_filter_buffer(&self) -> Vec<String> {
+    fn smart_filter_buffer(&mut self) -> Vec<String> {
         let mut filtered_lines = Vec::new();
         
         // 20行全体をクリーンアップ（ANSI除去のみ）
@@ -118,7 +132,7 @@ impl BaseStateDetector {
     }
 
     /// ╭╮╰╯で囲まれたUIブロックを検出・抽出
-    fn extract_ui_blocks(&self, clean_lines: &[String], filtered_lines: &mut Vec<String>) {
+    fn extract_ui_blocks(&mut self, clean_lines: &[String], filtered_lines: &mut Vec<String>) {
         let mut i = 0;
         
         while i < clean_lines.len() {
@@ -137,7 +151,7 @@ impl BaseStateDetector {
     }
 
     /// UIブロックをパース
-    fn parse_ui_block(&self, lines: &[String]) -> Option<UiBlock> {
+    fn parse_ui_block(&mut self, lines: &[String]) -> Option<UiBlock> {
         if lines.is_empty() {
             return None;
         }
@@ -145,23 +159,47 @@ impl BaseStateDetector {
         let mut block_lines = Vec::new();
         let mut _lines_consumed = 0;
         let mut found_bottom = false;
-        let mut box_start_index = 0;
 
-        // ╭で始まる行のインデックスを見つける
+        // ╭で始まる行のインデックスを見つける（最後の完全なものを採用）
+        let mut box_start_index_opt = None;
         for (idx, line) in lines.iter().enumerate() {
-            if line.trim_start().starts_with('╭') {
-                box_start_index = idx;
-                break;
+            if line.trim_start().starts_with('╭') && !line.contains('�') {
+                box_start_index_opt = Some(idx);
+                if self.verbose {
+                    debug_println_raw(&format!("📦 [UI_BOX_CANDIDATE] Found box start at line {}: {}", idx, line.trim()));
+                }
             }
         }
+        
+        let box_start_index = match box_start_index_opt {
+            Some(idx) => {
+                if self.verbose {
+                    debug_println_raw(&format!("📦 [UI_BOX_SELECTED] Using box at line {}", idx));
+                }
+                idx
+            },
+            None => {
+                if self.verbose {
+                    debug_println_raw(&format!("⚠️  [NO_BOX_START] No valid ╭ character found in {} lines", lines.len()));
+                    for (i, line) in lines.iter().enumerate() {
+                        debug_println_raw(&format!("  [{}] '{}'", i, line));
+                    }
+                }
+                return None;
+            }
+        };
 
         // UIブロックの上の行を抽出（実行状況情報）
+        // 選択されたUI boxの上の行をチェック
         if box_start_index > 0 {
+            if self.verbose {
+                debug_println_raw(&format!("🔍 [UI_UPPER_SEARCH] Checking {} lines above UI box", box_start_index));
+            }
             for i in 0..box_start_index {
                 let upper_line = &lines[i];
                 if !upper_line.trim().is_empty() {
                     if self.verbose {
-                        eprintln!("🔝 [UI_UPPER] Line {}: {}", i + 1, upper_line.trim());
+                        debug_println_raw(&format!("🔝 [UI_UPPER] Line {}: {}", i + 1, upper_line.trim()));
                     }
                     
                     // 実行状況を示す情報を抽出
@@ -169,12 +207,25 @@ impl BaseStateDetector {
                        upper_line.contains("Auto-updating") ||
                        upper_line.contains("Tool:") ||
                        upper_line.contains("Wizarding") ||
-                       upper_line.contains("Baking") {
-                        block_lines.push(format!("UI_EXECUTION: {}", upper_line.trim()));
+                       upper_line.contains("Baking") ||
+                       upper_line.contains("Musing") {
+                        let trimmed = upper_line.trim();
+                        block_lines.push(format!("UI_EXECUTION: {}", trimmed));
+                        
+                        // UI実行コンテキストを更新（数文字の表示用）
+                        self.ui_execution_context = Some(Self::extract_short_context(trimmed));
+                        
+                        if self.verbose {
+                            debug_println_raw(&format!("⚡ [UI_EXECUTION_FOUND] {}", trimmed));
+                        }
                     } else {
                         block_lines.push(format!("UI_CONTEXT: {}", upper_line.trim()));
                     }
                 }
+            }
+        } else {
+            if self.verbose {
+                debug_println_raw("🔍 [UI_UPPER_SEARCH] Box at line 0, no lines above to check");
             }
         }
 
@@ -217,7 +268,7 @@ impl BaseStateDetector {
         for (idx, line) in lines.iter().skip(status_start).take(3).enumerate() {
             if !line.trim().is_empty() {
                 if self.verbose {
-                    eprintln!("📍 [UI_STATUS] Line {}: {}", idx + 1, line.trim());
+                    debug_println_raw(&format!("📍 [UI_STATUS] Line {}: {}", idx + 1, line.trim()));
                 }
                 block_lines.push(format!("UI_STATUS: {}", line.trim()));
             }
@@ -236,7 +287,7 @@ impl BaseStateDetector {
         for line in filtered_buffer {
             if let Some(state) = self.detect_from_ui_content(line) {
                 if self.verbose && state != self.current_state {
-                    eprintln!("🎯 [UI_STATE_TRIGGER] {} triggered by: {}", state, line);
+                    debug_println_raw(&format!("🎯 [UI_STATE_TRIGGER] {} triggered by: {}", state, line));
                 }
                 return state;
             }
@@ -245,16 +296,28 @@ impl BaseStateDetector {
         // UIボックスが見つからない場合のデフォルト処理
         if filtered_buffer.is_empty() {
             if self.verbose {
-                eprintln!("🔍 [NO_UI_BOX] Empty buffer, maintaining current state");
+                debug_println_raw(&format!("🔍 [NO_UI_BOX] Empty buffer, maintaining current state: {:?}", self.current_state));
             }
             return self.current_state.clone();
         }
 
-        // UIボックスはあるが状態を決定できない場合はIdle
-        if self.verbose {
-            eprintln!("🔍 [UI_BOX_FOUND] UI elements present but no state indicators → Idle");
+        // UIボックスはあるが状態を決定できない場合
+        let has_ui_elements = filtered_buffer.iter().any(|line| 
+            line.starts_with("UI_") || line.starts_with("USER_INPUT:")
+        );
+        
+        if has_ui_elements {
+            if self.verbose {
+                debug_println_raw("🔍 [UI_BOX_FOUND] UI elements present but no state indicators → Idle");
+            }
+            SessionState::Idle
+        } else {
+            // UI要素が全く見つからない場合は現在の状態を維持
+            if self.verbose {
+                debug_println_raw(&format!("🔍 [NO_UI_ELEMENTS] No UI elements found, maintaining current state: {:?}", self.current_state));
+            }
+            self.current_state.clone()
         }
-        SessionState::Idle
     }
 
     /// UI要素から状態を検出
@@ -268,14 +331,14 @@ impl BaseStateDetector {
                exec_content.contains("Baking") ||
                exec_content.contains("Auto-updating") {
                 if self.verbose {
-                    eprintln!("⚡ [UI_EXECUTION_DETECTED] {} → Busy", exec_content);
+                    debug_println_raw(&format!("⚡ [UI_EXECUTION_DETECTED] {} → Busy", exec_content));
                 }
                 return Some(SessionState::Busy); // ツール実行中
             }
             
             if exec_content.contains("Tool:") {
                 if self.verbose {
-                    eprintln!("🔧 [UI_TOOL_DETECTED] {} → Busy", exec_content);
+                    debug_println_raw(&format!("🔧 [UI_TOOL_DETECTED] {} → Busy", exec_content));
                 }
                 return Some(SessionState::Busy);
             }
@@ -285,7 +348,7 @@ impl BaseStateDetector {
         if line.starts_with("UI_CONTEXT:") {
             let context_content = line.trim_start_matches("UI_CONTEXT:").trim();
             if self.verbose {
-                eprintln!("💭 [UI_CONTEXT_DETECTED] {}", context_content);
+                debug_println_raw(&format!("💭 [UI_CONTEXT_DETECTED] {}", context_content));
             }
         }
 
@@ -293,8 +356,20 @@ impl BaseStateDetector {
         if line.starts_with("USER_INPUT:") {
             let content = line.trim_start_matches("USER_INPUT:").trim();
             if !content.is_empty() {
+                // 承認プロンプトの検出
+                if content.contains("Do you want") ||
+                   content.contains("Would you like") ||
+                   content.contains("May I") ||
+                   content.contains("proceed?") ||
+                   content.contains("y/n") {
+                    if self.verbose {
+                        debug_println_raw(&format!("⏳ [APPROVAL_PROMPT_DETECTED] {} → WaitingForInput", content));
+                    }
+                    return Some(SessionState::WaitingForInput);
+                }
+                
                 if self.verbose {
-                    eprintln!("📝 [USER_INPUT_DETECTED] {}", content);
+                    debug_println_raw(&format!("📝 [USER_INPUT_DETECTED] {}", content));
                 }
                 return Some(SessionState::Idle); // ユーザーが入力中
             }
@@ -303,6 +378,18 @@ impl BaseStateDetector {
         // UIステータス要素
         if line.starts_with("UI_STATUS:") {
             let status_content = line.trim_start_matches("UI_STATUS:").trim();
+            
+            // 承認プロンプトの検出（ステータス行にも現れる可能性）
+            if status_content.contains("Do you want") ||
+               status_content.contains("Would you like") ||
+               status_content.contains("May I") ||
+               status_content.contains("proceed?") ||
+               status_content.contains("y/n") {
+                if self.verbose {
+                    debug_println_raw(&format!("⏳ [STATUS_APPROVAL_PROMPT] {} → WaitingForInput", status_content));
+                }
+                return Some(SessionState::WaitingForInput);
+            }
             
             // ステータス内容から状態を推測
             if status_content.contains("◯ IDE connected") {
@@ -319,7 +406,7 @@ impl BaseStateDetector {
             }
             
             if self.verbose {
-                eprintln!("📊 [UI_STATUS_DETECTED] {}", status_content);
+                debug_println_raw(&format!("📊 [UI_STATUS_DETECTED] {}", status_content));
             }
         }
 
@@ -393,6 +480,26 @@ impl BaseStateDetector {
         result
     }
 
+    /// UI実行コンテキストから数文字の短縮表示を抽出
+    fn extract_short_context(full_context: &str) -> String {
+        if full_context.contains("esc to interrupt") {
+            "実行中".to_string()
+        } else if full_context.contains("Musing") {
+            "思考中".to_string()
+        } else if full_context.contains("Auto-updating") {
+            "更新中".to_string()
+        } else if full_context.contains("Tool:") {
+            "ツール".to_string()
+        } else if full_context.contains("Wizarding") {
+            "処理中".to_string()
+        } else if full_context.contains("Baking") {
+            "構築中".to_string()
+        } else {
+            // 最初の6文字を表示
+            full_context.chars().take(6).collect()
+        }
+    }
+
     /// 現在の状態を設定
     pub fn set_current_state(&mut self, state: SessionState) {
         self.current_state = state;
@@ -412,7 +519,7 @@ impl BaseStateDetector {
 impl StateDetector for BaseStateDetector {
     fn process_output(&mut self, output: &str) -> Option<SessionState> {
         if self.verbose && !output.trim().is_empty() {
-            eprintln!("🔄 [PROCESS_OUTPUT] Adding lines to buffer");
+            debug_println_raw("🔄 [PROCESS_OUTPUT] Adding lines to buffer");
         }
         
         // 出力を行ごとに分割して生バッファに追加
@@ -434,7 +541,7 @@ impl StateDetector for BaseStateDetector {
             self.current_state = new_state.clone();
 
             if self.verbose {
-                eprintln!("🎯 [STATE_CHANGE] {} → {}", old_state, new_state);
+                debug_println_raw(&format!("🎯 [STATE_CHANGE] {} → {}", old_state, new_state));
             }
 
             Some(new_state)
@@ -469,6 +576,10 @@ impl StateDetector for BaseStateDetector {
             }
         }
     }
+
+    fn get_ui_execution_context(&self) -> Option<String> {
+        self.ui_execution_context.clone()
+    }
 }
 
 /// 状態検出器のファクトリー
@@ -476,7 +587,7 @@ use crate::cli_tool::CliToolType;
 
 pub fn create_state_detector(tool_type: CliToolType, verbose: bool) -> Box<dyn StateDetector> {
     match tool_type {
-        CliToolType::Claude => Box::new(crate::claude_state_detector::ClaudeStateDetector::new(
+        CliToolType::Claude => Box::new(crate::screen_claude_detector::ScreenClaudeStateDetector::new(
             verbose,
         )),
         CliToolType::Gemini => Box::new(crate::gemini_state_detector::GeminiStateDetector::new(

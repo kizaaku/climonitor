@@ -196,6 +196,10 @@ impl StateDetector for GeminiStateDetector {
     fn debug_buffer(&self) {
         self.base.debug_buffer()
     }
+
+    fn get_ui_execution_context(&self) -> Option<String> {
+        self.base.get_ui_execution_context()
+    }
 }
 
 #[cfg(test)]
