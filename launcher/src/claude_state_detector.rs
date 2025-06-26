@@ -1,19 +1,20 @@
 // claude_state_detector.rs - Claude Code固有の状態検出器
 
-use crate::state_detector::{StateDetector, StatePatterns, BaseStateDetector};
+use crate::state_detector::{StateDetector, StatePatterns};
 use crate::session_state::SessionState;
+use crate::screen_state_detector::ScreenStateDetector;
 use ccmonitor_shared::SessionStatus;
 
-/// Claude Code固有の状態検出器
+/// Claude Code固有の状態検出器 (Screen-based)
 pub struct ClaudeStateDetector {
-    base: BaseStateDetector,
+    screen_detector: ScreenStateDetector,
 }
 
 impl ClaudeStateDetector {
     pub fn new(verbose: bool) -> Self {
         let patterns = Self::create_claude_patterns();
         Self {
-            base: BaseStateDetector::new(patterns, verbose),
+            screen_detector: ScreenStateDetector::new(patterns, verbose),
         }
     }
 
@@ -169,8 +170,8 @@ impl ClaudeStateDetector {
         // Claude Code特有の処理をここに追加
         // 例：ツール実行シーケンスの検出、プロンプト/応答サイクルの識別など
         
-        // 現在は基本処理をそのまま使用
-        self.base.process_output(output)
+        // 現在はスクリーンベース処理をそのまま使用
+        self.screen_detector.process_output(output)
     }
 }
 
@@ -180,23 +181,23 @@ impl StateDetector for ClaudeStateDetector {
     }
 
     fn current_state(&self) -> &SessionState {
-        self.base.current_state()
+        self.screen_detector.current_state()
     }
 
     fn to_session_status(&self) -> SessionStatus {
-        self.base.to_session_status()
+        self.screen_detector.to_session_status()
     }
 
     fn get_patterns(&self) -> &StatePatterns {
-        self.base.get_patterns()
+        self.screen_detector.get_patterns()
     }
 
     fn debug_buffer(&self) {
-        self.base.debug_buffer()
+        self.screen_detector.debug_buffer()
     }
 
     fn get_ui_execution_context(&self) -> Option<String> {
-        self.base.get_ui_execution_context()
+        self.screen_detector.get_ui_execution_context()
     }
 }
 
