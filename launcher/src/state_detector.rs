@@ -4,6 +4,13 @@ use crate::session_state::SessionState;
 use ccmonitor_shared::SessionStatus;
 use std::collections::VecDeque;
 
+/// UIブロック（╭╮╰╯で囲まれた部分）の解析結果
+#[derive(Debug)]
+struct UiBlock {
+    content: Vec<String>,
+    lines_consumed: usize,
+}
+
 /// 状態検出パターンの定義
 #[derive(Debug, Clone)]
 pub struct StatePatterns {
@@ -44,13 +51,12 @@ pub trait StateDetector: Send + Sync {
 
 /// 基本的な状態検出器の実装
 pub struct BaseStateDetector {
-    /// 出力バッファ（最後の30行を保持）
-    output_buffer: VecDeque<String>,
+    /// 生の出力バッファ（最後の20行を保持）
+    raw_buffer: VecDeque<String>,
     /// 現在の状態
     current_state: SessionState,
-    /// 最大バッファサイズ
-    #[allow(dead_code)]
-    max_buffer_lines: usize,
+    /// バッファサイズ（20行）
+    buffer_size: usize,
     /// デバッグモード
     verbose: bool,
     /// 状態検出パターン
@@ -60,38 +66,305 @@ pub struct BaseStateDetector {
 impl BaseStateDetector {
     pub fn new(patterns: StatePatterns, verbose: bool) -> Self {
         Self {
-            output_buffer: VecDeque::new(),
+            raw_buffer: VecDeque::new(),
             current_state: SessionState::Connected,
-            max_buffer_lines: 30,
+            buffer_size: 20,
             verbose,
             patterns,
         }
     }
 
-    /// バッファに行を追加（スマートフィルタリング）
-    pub fn add_line(&mut self, line: &str) {
-        // スマートフィルタリングを適用
-        if !self.should_process_line(line) {
-            // フィルタされた行は表示しない（ノイズ削減）
-            return;
+    /// 20行バッファ全体から状態を検出
+    fn detect_state_from_buffer(&self) -> SessionState {
+        if self.raw_buffer.is_empty() {
+            return self.current_state.clone();
         }
 
-        // ANSI エスケープシーケンスを除去
-        let clean_line = self.strip_ansi_enhanced(line);
+        if self.verbose {
+            eprintln!("🔍 [BUFFER_ANALYSIS] Processing {} lines as whole buffer", self.raw_buffer.len());
+        }
 
-        // 意味のある内容を抽出
-        if let Some(meaningful_content) = self.extract_meaningful_content(&clean_line) {
-            self.output_buffer.push_back(meaningful_content.clone());
+        // バッファ全体を一括でスマートフィルタリング
+        let filtered_buffer = self.smart_filter_buffer();
 
+        if self.verbose {
+            eprintln!("📜 [FILTERED_BUFFER] After filtering:");
+            for (i, line) in filtered_buffer.iter().enumerate() {
+                eprintln!("  {:2}: {}", i + 1, line);
+            }
+        }
+
+        // フィルタ済みバッファをそのまま状態検出に渡す
+        self.detect_state_from_filtered_buffer(&filtered_buffer)
+    }
+
+    /// バッファ全体を一括でスマートフィルタリング
+    fn smart_filter_buffer(&self) -> Vec<String> {
+        let mut filtered_lines = Vec::new();
+        
+        // 20行全体をクリーンアップ（ANSI除去のみ）
+        let clean_lines: Vec<String> = self.raw_buffer
+            .iter()
+            .rev() // 最新から古い順
+            .map(|line| self.strip_ansi_enhanced(line))
+            .collect();
+        
+        // ╭╮╰╯パターンを検出してユーザー入力とステータスを抽出
+        self.extract_ui_blocks(&clean_lines, &mut filtered_lines);
+        
+        // その他の意味のある内容も抽出
+        for line in &clean_lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            
+            if let Some(meaningful_content) = self.extract_meaningful_content(line) {
+                // UI blockで既に処理済みでない場合のみ追加
+                if !filtered_lines.contains(&meaningful_content) {
+                    filtered_lines.push(meaningful_content);
+                }
+            }
+        }
+        
+        filtered_lines
+    }
+
+    /// ╭╮╰╯で囲まれたUIブロックを検出・抽出
+    fn extract_ui_blocks(&self, clean_lines: &[String], filtered_lines: &mut Vec<String>) {
+        let mut i = 0;
+        
+        while i < clean_lines.len() {
+            let line = &clean_lines[i];
+            
+            // ╭で始まるボックスを検出
+            if line.trim_start().starts_with('╭') {
+                if let Some(ui_block) = self.parse_ui_block(&clean_lines[i..]) {
+                    filtered_lines.extend(ui_block.content);
+                    i += ui_block.lines_consumed;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    /// UIブロックをパース
+    fn parse_ui_block(&self, lines: &[String]) -> Option<UiBlock> {
+        if lines.is_empty() {
+            return None;
+        }
+
+        let mut block_lines = Vec::new();
+        let mut lines_consumed = 0;
+        let mut found_bottom = false;
+        let mut box_start_index = 0;
+
+        // ╭で始まる行のインデックスを見つける
+        for (idx, line) in lines.iter().enumerate() {
+            if line.trim_start().starts_with('╭') {
+                box_start_index = idx;
+                break;
+            }
+        }
+
+        // UIブロックの上の行を抽出（実行状況情報）
+        if box_start_index > 0 {
+            for i in 0..box_start_index {
+                let upper_line = &lines[i];
+                if !upper_line.trim().is_empty() {
+                    if self.verbose {
+                        eprintln!("🔝 [UI_UPPER] Line {}: {}", i + 1, upper_line.trim());
+                    }
+                    
+                    // 実行状況を示す情報を抽出
+                    if upper_line.contains("esc to interrupt") ||
+                       upper_line.contains("Auto-updating") ||
+                       upper_line.contains("Tool:") ||
+                       upper_line.contains("Wizarding") ||
+                       upper_line.contains("Baking") {
+                        block_lines.push(format!("UI_EXECUTION: {}", upper_line.trim()));
+                    } else {
+                        block_lines.push(format!("UI_CONTEXT: {}", upper_line.trim()));
+                    }
+                }
+            }
+        }
+
+        // ╭で始まる行を確認
+        if !lines[box_start_index].trim_start().starts_with('╭') {
+            return None;
+        }
+        lines_consumed = box_start_index + 1;
+
+        // ボックス内のコンテンツを収集
+        for line in lines.iter().skip(box_start_index + 1) {
+            lines_consumed += 1;
+            
+            // ╰で終わるボックスを検出
+            if line.trim_start().starts_with('╰') {
+                found_bottom = true;
+                break;
+            }
+            
+            // ユーザー入力内容を抽出（│で囲まれた部分）
+            if line.contains('│') {
+                let content = line.trim();
+                if content.starts_with('│') && content.ends_with('│') {
+                    let inner_content = content.trim_start_matches('│')
+                                               .trim_end_matches('│')
+                                               .trim();
+                    if !inner_content.is_empty() {
+                        block_lines.push(format!("USER_INPUT: {}", inner_content));
+                    }
+                }
+            }
+        }
+
+        if !found_bottom {
+            return None;
+        }
+
+        // ボックスの下3行をステータス要素として収集
+        let status_start = lines_consumed;
+        for (idx, line) in lines.iter().skip(status_start).take(3).enumerate() {
+            if !line.trim().is_empty() {
+                if self.verbose {
+                    eprintln!("📍 [UI_STATUS] Line {}: {}", idx + 1, line.trim());
+                }
+                block_lines.push(format!("UI_STATUS: {}", line.trim()));
+            }
+            lines_consumed += 1;
+        }
+
+        Some(UiBlock {
+            content: block_lines,
+            lines_consumed,
+        })
+    }
+
+    /// フィルタ済みバッファから状態を検出
+    fn detect_state_from_filtered_buffer(&self, filtered_buffer: &[String]) -> SessionState {
+        // 1. UI要素から状態を検出（最優先）
+        for line in filtered_buffer {
+            if let Some(state) = self.detect_from_ui_content(line) {
+                if self.verbose && state != self.current_state {
+                    eprintln!("🎯 [UI_STATE_TRIGGER] {} triggered by: {}", state, line);
+                }
+                return state;
+            }
+        }
+
+        // 2. 従来の構造化された内容から検出
+        for line in filtered_buffer {
+            if let Some(state) = self.detect_from_structured_content(line) {
+                if self.verbose && state != self.current_state {
+                    eprintln!("🎯 [STATE_TRIGGER] {} triggered by: {}", state, line);
+                }
+                return state;
+            }
+        }
+
+        // 2. ツール完了の推測：現在Busyで、"esc to interrupt"がない場合
+        if self.current_state == SessionState::Busy {
+            let has_interrupt = filtered_buffer.iter().any(|line| {
+                line.contains("esc to interrupt") || line.contains("Auto-updating")
+            });
+            
+            if !has_interrupt && !filtered_buffer.is_empty() {
+                if self.verbose {
+                    eprintln!("🔍 [COMPLETION_INFERENCE] No active tool indicators → Idle");
+                }
+                return SessionState::Idle;
+            }
+        }
+
+        // 3. 従来のパターンマッチング（フォールバック）
+        for line in filtered_buffer {
+            if self.is_pattern_match(line, &self.patterns.error_patterns) {
+                return SessionState::Error;
+            }
+            if self.is_pattern_match(line, &self.patterns.waiting_patterns) {
+                return SessionState::WaitingForInput;
+            }
+            if self.is_pattern_match(line, &self.patterns.busy_patterns) {
+                return SessionState::Busy;
+            }
+            if self.is_pattern_match(line, &self.patterns.idle_patterns) {
+                return SessionState::Idle;
+            }
+        }
+
+        // 状態変化なし
+        self.current_state.clone()
+    }
+
+    /// UI要素から状態を検出
+    fn detect_from_ui_content(&self, line: &str) -> Option<SessionState> {
+        // UI実行情報（最優先）
+        if line.starts_with("UI_EXECUTION:") {
+            let exec_content = line.trim_start_matches("UI_EXECUTION:").trim();
+            
+            if exec_content.contains("esc to interrupt") ||
+               exec_content.contains("Wizarding") ||
+               exec_content.contains("Baking") ||
+               exec_content.contains("Auto-updating") {
+                if self.verbose {
+                    eprintln!("⚡ [UI_EXECUTION_DETECTED] {} → Busy", exec_content);
+                }
+                return Some(SessionState::Busy); // ツール実行中
+            }
+            
+            if exec_content.contains("Tool:") {
+                if self.verbose {
+                    eprintln!("🔧 [UI_TOOL_DETECTED] {} → Busy", exec_content);
+                }
+                return Some(SessionState::Busy);
+            }
+        }
+
+        // UI文脈情報
+        if line.starts_with("UI_CONTEXT:") {
+            let context_content = line.trim_start_matches("UI_CONTEXT:").trim();
             if self.verbose {
-                eprintln!("✨ [EXTRACTED] {}", meaningful_content);
-            }
-
-            // バッファサイズを制限（20行に拡張）
-            while self.output_buffer.len() > 20 {
-                self.output_buffer.pop_front();
+                eprintln!("💭 [UI_CONTEXT_DETECTED] {}", context_content);
             }
         }
+
+        // ユーザー入力要素
+        if line.starts_with("USER_INPUT:") {
+            let content = line.trim_start_matches("USER_INPUT:").trim();
+            if !content.is_empty() {
+                if self.verbose {
+                    eprintln!("📝 [USER_INPUT_DETECTED] {}", content);
+                }
+                return Some(SessionState::Idle); // ユーザーが入力中
+            }
+        }
+
+        // UIステータス要素
+        if line.starts_with("UI_STATUS:") {
+            let status_content = line.trim_start_matches("UI_STATUS:").trim();
+            
+            // ステータス内容から状態を推測
+            if status_content.contains("◯ IDE connected") {
+                return Some(SessionState::Idle);
+            }
+            if status_content.contains("⧉ In") {
+                return Some(SessionState::Busy); // ファイル編集中
+            }
+            if status_content.contains("✗") || status_content.contains("failed") {
+                return Some(SessionState::Error);
+            }
+            if status_content.contains("esc to interrupt") {
+                return Some(SessionState::Busy); // ツール実行中
+            }
+            
+            if self.verbose {
+                eprintln!("📊 [UI_STATUS_DETECTED] {}", status_content);
+            }
+        }
+
+        None
     }
 
     /// 行を処理すべきかどうかを判定
@@ -262,88 +535,6 @@ impl BaseStateDetector {
         result
     }
 
-    /// 出力バッファから状態を検出（スマートフィルタリング版）
-    pub fn detect_state(&self) -> SessionState {
-        let recent_lines: Vec<&String> = self
-            .output_buffer
-            .iter()
-            .rev()
-            .take(10) // 最後の10行を確認
-            .collect();
-
-        // バッファ履歴は状態変化時のみ表示（ノイズ削減）
-
-        // 1. 構造化された内容から優先的に検出
-        for line in &recent_lines {
-            if let Some(state) = self.detect_from_structured_content(line) {
-                if self.verbose && state != self.current_state {
-                    eprintln!("\n🎯 [STATE_CHANGE] {} → {}", self.current_state, state);
-                    eprintln!("📜 [BUFFER] Recent lines:");
-                    for (i, buffer_line) in recent_lines.iter().enumerate() {
-                        let marker = if buffer_line == line { "➤" } else { " " };
-                        eprintln!("  {}{:2}: {}", marker, i + 1, buffer_line);
-                    }
-                    eprintln!("");
-                }
-                return state;
-            }
-        }
-
-        // 2. 従来のパターンマッチング（フォールバック）
-        for line in &recent_lines {
-            if self.is_pattern_match(line, &self.patterns.error_patterns) {
-                return SessionState::Error;
-            }
-        }
-
-        for line in &recent_lines {
-            if self.is_pattern_match(line, &self.patterns.waiting_patterns) {
-                return SessionState::WaitingForInput;
-            }
-        }
-
-        for line in &recent_lines {
-            if self.is_pattern_match(line, &self.patterns.busy_patterns) {
-                return SessionState::Busy;
-            }
-        }
-
-        for line in &recent_lines {
-            if self.is_pattern_match(line, &self.patterns.idle_patterns) {
-                return SessionState::Idle;
-            }
-        }
-
-        // 3. ツール完了の推測：現在Busyで、最近のバッファに"esc to interrupt"がない場合
-        if self.current_state == SessionState::Busy {
-            let interrupt_lines: Vec<_> = recent_lines
-                .iter()
-                .filter(|line| line.contains("esc to interrupt") || line.contains("Auto-updating"))
-                .collect();
-
-            if interrupt_lines.is_empty() && !recent_lines.is_empty() {
-                if self.verbose {
-                    eprintln!(
-                        "\n🎯 [STATE_CHANGE] {} → {}",
-                        self.current_state,
-                        SessionState::Idle
-                    );
-                    eprintln!(
-                        "🔍 [REASON] No active tool indicators found (esc to interrupt absent)"
-                    );
-                    eprintln!("📜 [BUFFER] Recent lines:");
-                    for (i, buffer_line) in recent_lines.iter().enumerate() {
-                        eprintln!("   {:2}: {}", i + 1, buffer_line);
-                    }
-                    eprintln!("");
-                }
-                return SessionState::Idle;
-            }
-        }
-
-        // どのパターンにもマッチしない場合は現在の状態を維持
-        self.current_state.clone()
-    }
 
     /// 構造化された内容から状態を検出
     fn detect_from_structured_content(&self, line: &str) -> Option<SessionState> {
@@ -472,8 +663,8 @@ impl BaseStateDetector {
     }
 
     /// 出力バッファの参照を取得
-    pub fn get_output_buffer(&self) -> &VecDeque<String> {
-        &self.output_buffer
+    pub fn get_raw_buffer(&self) -> &VecDeque<String> {
+        &self.raw_buffer
     }
 
     /// verboseフラグを取得
@@ -484,13 +675,22 @@ impl BaseStateDetector {
 
 impl StateDetector for BaseStateDetector {
     fn process_output(&mut self, output: &str) -> Option<SessionState> {
-        // 出力を行ごとに分割してバッファに追加
+        if self.verbose && !output.trim().is_empty() {
+            eprintln!("🔄 [PROCESS_OUTPUT] Adding lines to buffer");
+        }
+        
+        // 出力を行ごとに分割して生バッファに追加
         for line in output.lines() {
-            self.add_line(line);
+            self.raw_buffer.push_back(line.to_string());
+            
+            // バッファサイズを20行に制限
+            while self.raw_buffer.len() > self.buffer_size {
+                self.raw_buffer.pop_front();
+            }
         }
 
-        // 状態を検出
-        let new_state = self.detect_state();
+        // バッファが20行貯まったら（または変化があったら）状態を検出
+        let new_state = self.detect_state_from_buffer();
 
         // 状態が変化した場合のみ通知
         if new_state != self.current_state {
@@ -498,7 +698,7 @@ impl StateDetector for BaseStateDetector {
             self.current_state = new_state.clone();
 
             if self.verbose {
-                println!("🔄 State changed: {} -> {}", old_state, new_state);
+                eprintln!("🎯 [STATE_CHANGE] {} → {}", old_state, new_state);
             }
 
             Some(new_state)
@@ -527,8 +727,8 @@ impl StateDetector for BaseStateDetector {
 
     fn debug_buffer(&self) {
         if self.verbose {
-            println!("🔍 Buffer contents ({} lines):", self.output_buffer.len());
-            for (i, line) in self.output_buffer.iter().enumerate() {
+            println!("🔍 Buffer contents ({} lines):", self.raw_buffer.len());
+            for (i, line) in self.raw_buffer.iter().enumerate() {
                 println!("  {}: {}", i, line);
             }
         }
