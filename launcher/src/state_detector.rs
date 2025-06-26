@@ -49,6 +49,7 @@ pub struct BaseStateDetector {
     /// 現在の状態
     current_state: SessionState,
     /// 最大バッファサイズ
+    #[allow(dead_code)]
     max_buffer_lines: usize,
     /// デバッグモード
     verbose: bool,
@@ -67,20 +68,201 @@ impl BaseStateDetector {
         }
     }
 
-    /// バッファに行を追加
+    /// バッファに行を追加（スマートフィルタリング）
     pub fn add_line(&mut self, line: &str) {
+        // スマートフィルタリングを適用
+        if !self.should_process_line(line) {
+            if self.verbose && !line.trim().is_empty() {
+                eprintln!("🔇 [FILTERED] {}", line.chars().take(80).collect::<String>());
+            }
+            return;
+        }
+        
         // ANSI エスケープシーケンスを除去
-        let clean_line = self.strip_ansi(line);
+        let clean_line = self.strip_ansi_enhanced(line);
         
-        self.output_buffer.push_back(clean_line);
+        if self.verbose {
+            eprintln!("📥 [RAW] {}", line.chars().take(80).collect::<String>());
+            eprintln!("🧹 [CLEAN] {}", clean_line.chars().take(80).collect::<String>());
+        }
         
-        // バッファサイズを制限
-        while self.output_buffer.len() > self.max_buffer_lines {
-            self.output_buffer.pop_front();
+        // 意味のある内容を抽出
+        if let Some(meaningful_content) = self.extract_meaningful_content(&clean_line) {
+            if self.verbose {
+                eprintln!("✨ [EXTRACTED] {}", meaningful_content);
+            }
+            self.output_buffer.push_back(meaningful_content);
+            
+            // バッファサイズを制限（20行に拡張）
+            while self.output_buffer.len() > 20 {
+                self.output_buffer.pop_front();
+            }
         }
     }
+    
+    /// 行を処理すべきかどうかを判定
+    fn should_process_line(&self, line: &str) -> bool {
+        // 1. カーソル制御のみの行をスキップ
+        if self.is_cursor_control_only(line) {
+            return false;
+        }
+        
+        // 2. 空行や意味のない行をスキップ
+        let clean = self.strip_ansi_enhanced(line);
+        if clean.trim().is_empty() {
+            return false;
+        }
+        
+        // 3. 繰り返し描画される装飾要素をスキップ
+        if self.is_decorative_element(&clean) {
+            return false;
+        }
+        
+        true
+    }
+    
+    /// カーソル制御のみの行かどうかを判定
+    fn is_cursor_control_only(&self, line: &str) -> bool {
+        let trimmed = line.trim();
+        
+        // カーソル移動やクリアのみのパターン
+        if trimmed.starts_with('\x1b') {
+            // よくあるカーソル制御パターン
+            let patterns = [
+                "[2K[1A[2K",      // 行クリア + カーソル上移動
+                "[?25l[?2004h",   // カーソル非表示 + bracketed paste
+                "[G",             // カーソルを行頭に移動
+            ];
+            
+            return patterns.iter().any(|pattern| trimmed.contains(pattern));
+        }
+        
+        false
+    }
+    
+    /// 装飾要素かどうかを判定
+    fn is_decorative_element(&self, clean_line: &str) -> bool {
+        let trimmed = clean_line.trim();
+        
+        // ボックス描画文字のみで構成される行
+        if trimmed.chars().all(|c| {
+            matches!(c, '─' | '│' | '╭' | '╮' | '╯' | '╰' | ' ')
+        }) {
+            return true;
+        }
+        
+        // ショートカットヘルプ行（ステータスと混在する場合を除く）
+        if trimmed == "? for shortcuts" {
+            return true;
+        }
+        
+        // ステータス情報のないショートカットヘルプ行のみフィルタ
+        if trimmed.starts_with("? for shortcuts") && 
+           !trimmed.contains("◯") && !trimmed.contains("⧉") && !trimmed.contains("✗") {
+            return true;
+        }
+        
+        false
+    }
+    
+    /// 意味のある内容を抽出
+    fn extract_meaningful_content(&self, clean_line: &str) -> Option<String> {
+        let trimmed = clean_line.trim();
+        
+        // 1. ユーザー入力エリア（ccmanager参考）
+        if trimmed.starts_with("│ > ") {
+            let content = trimmed.trim_start_matches("│ > ")
+                                .trim_end_matches(" │")
+                                .trim();
+            if !content.is_empty() {
+                return Some(format!("USER_INPUT: {}", content));
+            }
+        }
+        
+        // 2. Claude の承認プロンプト（ccmanager パターン）
+        if trimmed.contains("│ Do you want") || 
+           trimmed.contains("│ Would you like") ||
+           trimmed.contains("│ May I") {
+            return Some(format!("APPROVAL_PROMPT: {}", trimmed));
+        }
+        
+        // 3. ステータス情報（重要なもののみ抽出）
+        if trimmed.contains("◯") || trimmed.contains("✗") {
+            // 重要なステータス部分のみを抽出
+            let status_part = if let Some(pos) = trimmed.find("◯") {
+                &trimmed[pos..]
+            } else if let Some(pos) = trimmed.find("✗") {
+                &trimmed[pos..]
+            } else {
+                trimmed
+            };
+            
+            return Some(format!("STATUS: {}", status_part.trim()));
+        }
+        
+        // ⧉ In はファイル名表示なので無視（状態検出に使わない）
+        
+        // 4. エラーメッセージ
+        if trimmed.contains("Error:") || trimmed.contains("failed") || trimmed.contains("API Error") {
+            return Some(format!("ERROR: {}", trimmed));
+        }
+        
+        // 5. ツール実行・完了メッセージ
+        if trimmed.contains("esc to interrupt") || 
+           trimmed.contains("Auto-updating") ||
+           trimmed.contains("Tool:") ||
+           trimmed.contains("✅") ||
+           trimmed.contains("🔧") {
+            return Some(format!("TOOL_STATUS: {}", trimmed));
+        }
+        
+        // 6. その他の重要そうな内容（絵文字や特定キーワード含む）
+        if trimmed.contains("🤔") || trimmed.contains("⏳") || 
+           trimmed.contains("proceed?") || trimmed.contains("y/n") {
+            return Some(format!("INTERACTION: {}", trimmed));
+        }
+        
+        None
+    }
+    
+    /// 強化されたANSI除去
+    fn strip_ansi_enhanced(&self, text: &str) -> String {
+        let mut result = String::new();
+        let mut chars = text.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                // ANSI エスケープシーケンスの開始
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // '[' をスキップ
+                    
+                    // パラメータとコマンド文字をスキップ
+                    while let Some(ch) = chars.next() {
+                        if ch.is_ascii_alphabetic() || ch == '~' {
+                            break; // 終端文字で終了
+                        }
+                    }
+                } else if chars.peek() == Some(&']') {
+                    // OSC (Operating System Command) シーケンス
+                    chars.next(); // ']' をスキップ
+                    while let Some(ch) = chars.next() {
+                        if ch == '\x07' || (ch == '\x1b' && chars.peek() == Some(&'\\')) {
+                            if ch == '\x1b' {
+                                chars.next(); // '\' をスキップ
+                            }
+                            break;
+                        }
+                    }
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        
+        result
+    }
 
-    /// 出力バッファから状態を検出
+    /// 出力バッファから状態を検出（スマートフィルタリング版）
     pub fn detect_state(&self) -> SessionState {
         let recent_lines: Vec<&String> = self.output_buffer
             .iter()
@@ -88,27 +270,17 @@ impl BaseStateDetector {
             .take(10) // 最後の10行を確認
             .collect();
 
-        // 最新の行から優先的にチェック（最新情報を優先）
-        if let Some(last_line) = recent_lines.first() {
-            // 最新行でのエラーパターン（強い優先度）
-            if self.is_pattern_match(last_line, &self.patterns.error_patterns) {
-                return SessionState::Error;
-            }
-            // 最新行での入力待ちパターン（強い優先度）
-            if self.is_pattern_match(last_line, &self.patterns.waiting_patterns) {
-                return SessionState::WaitingForInput;
-            }
-            // 最新行でのアイドルパターン（完了メッセージなど）
-            if self.is_pattern_match(last_line, &self.patterns.idle_patterns) {
-                return SessionState::Idle;
-            }
-            // 最新行でのビジーパターン
-            if self.is_pattern_match(last_line, &self.patterns.busy_patterns) {
-                return SessionState::Busy;
+        // 1. 構造化された内容から優先的に検出
+        for line in &recent_lines {
+            if let Some(state) = self.detect_from_structured_content(line) {
+                if self.verbose && state != self.current_state {
+                    eprintln!("🎯 [STATE_CHANGE] {} → {}", self.current_state, state);
+                }
+                return state;
             }
         }
 
-        // 最新行で決まらない場合は、最近の数行を確認
+        // 2. 従来のパターンマッチング（フォールバック）
         for line in &recent_lines {
             if self.is_pattern_match(line, &self.patterns.error_patterns) {
                 return SessionState::Error;
@@ -137,6 +309,85 @@ impl BaseStateDetector {
         self.current_state.clone()
     }
 
+    /// 構造化された内容から状態を検出
+    fn detect_from_structured_content(&self, line: &str) -> Option<SessionState> {
+        // ccmanager のパターンを参考にした高精度検出
+        
+        // 1. 承認プロンプト（最高優先度）
+        if line.starts_with("APPROVAL_PROMPT:") {
+            if line.contains("Do you want") || line.contains("Would you like") || line.contains("May I") {
+                if self.verbose {
+                    eprintln!("🔍 [STATE] Approval prompt detected → WaitingForInput");
+                }
+                return Some(SessionState::WaitingForInput);
+            }
+        }
+        
+        // 2. エラー状態（高優先度）
+        if line.starts_with("ERROR:") {
+            if self.verbose {
+                eprintln!("🔍 [STATE] Error detected → Error");
+            }
+            return Some(SessionState::Error);
+        }
+        
+        // 3. ステータス行からの検出（高優先度）
+        if line.starts_with("STATUS:") {
+            if line.contains("✗") || line.contains("failed") {
+                if self.verbose {
+                    eprintln!("🔍 [STATE] Status error detected → Error");
+                }
+                return Some(SessionState::Error);
+            }
+            // ⧉ In は単なるファイル名表示なので無視
+            if line.contains("◯ IDE connected") {
+                if self.verbose {
+                    eprintln!("🔍 [STATE] IDE connected → Idle");
+                }
+                return Some(SessionState::Idle);
+            }
+        }
+        
+        // 4. ツール状態（中優先度）
+        if line.starts_with("TOOL_STATUS:") {
+            if line.contains("esc to interrupt") {
+                if self.verbose {
+                    eprintln!("🔍 [STATE] Tool execution detected (esc to interrupt) → Busy");
+                }
+                return Some(SessionState::Busy); // ccmanager パターン
+            }
+            if line.contains("Auto-updating") {
+                if self.verbose {
+                    eprintln!("🔍 [STATE] Auto-updating detected → Busy");
+                }
+                return Some(SessionState::Busy);
+            }
+            if line.contains("Tool:") {
+                if self.verbose {
+                    eprintln!("🔍 [STATE] Tool execution detected → Busy");
+                }
+                return Some(SessionState::Busy);
+            }
+            if line.contains("✅") {
+                return Some(SessionState::Idle);
+            }
+        }
+        
+        // 5. インタラクション（中優先度）
+        if line.starts_with("INTERACTION:") {
+            if line.contains("proceed?") || line.contains("y/n") {
+                return Some(SessionState::WaitingForInput);
+            }
+        }
+        
+        // 6. ユーザー入力（低優先度、参考程度）
+        if line.starts_with("USER_INPUT:") {
+            return Some(SessionState::Idle); // ユーザーが入力中は基本的にIdle
+        }
+        
+        None
+    }
+
     /// パターンマッチングの実行
     fn is_pattern_match(&self, line: &str, patterns: &[String]) -> bool {
         let line_lower = line.to_lowercase();
@@ -147,6 +398,7 @@ impl BaseStateDetector {
     }
 
     /// ANSI エスケープシーケンスを除去（簡易版）
+    #[allow(dead_code)]
     fn strip_ansi(&self, text: &str) -> String {
         let mut result = String::new();
         let mut chars = text.chars().peekable();

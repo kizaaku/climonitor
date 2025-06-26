@@ -17,6 +17,10 @@ cargo run                           # Build and run in live mode
 cargo run -- --no-tui              # Non-interactive snapshot mode
 cargo run -- --verbose             # Verbose output for debugging
 
+# Debug state detection (human testing)
+ccmonitor-launcher --verbose claude # Shows detailed state detection process
+ccmonitor-launcher --verbose claude --help  # Test with simple commands
+
 # Install locally
 cargo install --path .
 
@@ -80,13 +84,27 @@ Enhanced status detection using direct Claude Code output analysis via PTY integ
 - **Idle (⚪)**: No activity detected for configured timeout period
 - **Connected (🔗)**: Active PTY session with Claude Code process running
 
-#### Pattern Recognition System
-`StandardAnalyzer` uses regex patterns to identify:
-- **Tool Execution**: "Tool:" patterns, permission requests, execution confirmations
-- **API Communication**: Request/response cycles, token usage, rate limiting
-- **User Interaction**: Input prompts, approval requests, confirmation dialogs
-- **Error States**: Exception traces, tool failures, connection issues
-- **Process States**: Startup, shutdown, signal handling, resource usage
+#### Smart Filtering State Detection System
+Enhanced state detection using smart filtering approach inspired by ccmanager:
+
+**Architecture:**
+- **Multi-tool Support**: Tool-specific state detectors (Claude, Gemini) via abstraction layer
+- **Smart Filtering**: Filters out ANSI noise, cursor controls, and decorative elements
+- **Structured Content**: Extracts meaningful content with prefixes (APPROVAL_PROMPT, STATUS, etc.)
+- **Priority-based Detection**: High-precision detection based on content type and priority
+
+**Detection Patterns:**
+- **Approval Prompts**: "│ Do you want", "│ May I" (ccmanager-inspired patterns)
+- **Status Indicators**: "⧉ In file.rs", "◯ IDE connected", "✗ Auto-update failed"
+- **Tool Execution**: "esc to interrupt", "Tool:", "Auto-updating"
+- **Error States**: API errors, connection failures, tool failures
+- **User Interaction**: Input prompts, y/n confirmations, approval requests
+
+**Smart Filtering Features:**
+- **ANSI Enhancement**: Improved 24-bit color and OSC sequence handling
+- **Cursor Control Skip**: Filters out "[2K[1A[2K" and similar patterns
+- **Decorative Filtering**: Skips box drawing characters and "? for shortcuts"
+- **Content Extraction**: Structures output as USER_INPUT, STATUS, TOOL_STATUS, etc.
 
 ### Async Event Loop Design
 
@@ -272,6 +290,28 @@ struct LauncherClient {
 This approach ensures the current system remains simple and maintainable while preserving the option for sophisticated features if genuine need emerges.
 
 ## Testing Strategy
+
+### Human Testing with Verbose Output
+
+For easy human testing of state detection:
+
+```bash
+# Terminal 1: Start verbose monitoring to see detection process
+ccmonitor-launcher --verbose claude
+
+# Watch the debug output showing:
+# 🔇 [FILTERED] - Lines filtered out by smart filtering
+# 📥 [RAW] - Raw output from Claude Code 
+# 🧹 [CLEAN] - Output after ANSI escape sequence removal
+# ✨ [EXTRACTED] - Meaningful content extracted (STATUS, APPROVAL_PROMPT, etc.)
+# 🔍 [STATE] - Individual state detection triggers
+# 🎯 [STATE_CHANGE] - Actual state transitions
+
+# Terminal 2: Monitor the session status
+ccmonitor --live
+```
+
+### Development Testing
 
 When developing:
 
