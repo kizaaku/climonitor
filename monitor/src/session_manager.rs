@@ -163,7 +163,11 @@ impl SessionManager {
     pub fn get_active_sessions(&self) -> Vec<&SessionInfo> {
         let cutoff = Utc::now() - chrono::Duration::minutes(5);
         self.sessions.values()
-            .filter(|s| s.last_activity > cutoff || s.status != SessionStatus::Idle)
+            .filter(|s| {
+                // launcherが存在し、かつアクティブな条件を満たすセッションのみ
+                self.launchers.contains_key(&s.launcher_id) && 
+                (s.last_activity > cutoff || s.status != SessionStatus::Idle)
+            })
             .collect()
     }
 
