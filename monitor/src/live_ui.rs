@@ -138,6 +138,17 @@ impl LiveUI {
                 } else {
                     String::new()
                 };
+
+                // Show tool type
+                let tool_type_display = if let Some(ref tool_type) = session.tool_type {
+                    match tool_type.as_str() {
+                        "claude" => " 🤖",
+                        "gemini" => " ✨",
+                        _ => " 🔧",
+                    }
+                } else {
+                    ""
+                };
                 
                 let execution_indicator = if session.is_waiting_for_execution {
                     " ⏳"
@@ -145,8 +156,9 @@ impl LiveUI {
                     ""
                 };
 
-                println!("    {} {}{} {} | {}{}{}{}", 
+                println!("    {}{} {}{} {} | {}{}{}{}", 
                     status_icon,
+                    tool_type_display,
                     status_label,
                     execution_indicator,
                     truncate_str(&session.id, 12),

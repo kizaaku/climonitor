@@ -162,6 +162,10 @@ impl LauncherClient {
             let connect_msg = LauncherToMonitor::Connect {
                 launcher_id: self.launcher_id.clone(),
                 project: self.project_name.clone(),
+                tool_type: match self.tool_wrapper.get_tool_type() {
+                    crate::cli_tool::CliToolType::Claude => "claude".to_string(),
+                    crate::cli_tool::CliToolType::Gemini => "gemini".to_string(),
+                },
                 claude_args: self.tool_wrapper.get_args().to_vec(),
                 working_dir: self.tool_wrapper.get_working_dir().cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
                 timestamp: Utc::now(),
@@ -330,7 +334,6 @@ impl LauncherClient {
         let verbose = self.verbose;
         let log_file = self.log_file.clone();
         let tool_type = self.tool_wrapper.get_tool_type();
-
         let handle = tokio::spawn(async move {
             Self::handle_pty_bidirectional_io(
                 pty_master,

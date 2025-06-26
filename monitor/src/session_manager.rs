@@ -72,11 +72,12 @@ impl SessionManager {
     pub fn handle_message(&mut self, message: LauncherToMonitor) -> Result<(), String> {
         match message {
             LauncherToMonitor::Connect { 
-                launcher_id, project, claude_args, working_dir, timestamp 
+                launcher_id, project, tool_type, claude_args, working_dir, timestamp 
             } => {
                 let launcher = LauncherInfo {
                     id: launcher_id,
                     project,
+                    tool_type,
                     claude_args,
                     working_dir,
                     connected_at: timestamp,
@@ -89,10 +90,16 @@ impl SessionManager {
             LauncherToMonitor::StateUpdate { 
                 launcher_id, session_id, status, ui_execution_context, timestamp 
             } => {
+                // launcher情報からプロジェクトとツールタイプを取得
+                let (project, tool_type) = self.launchers.get(&launcher_id)
+                    .map(|launcher| (launcher.project.clone(), Some(launcher.tool_type.clone())))
+                    .unwrap_or((None, None));
+
                 let session = SessionInfo {
                     id: session_id.clone(),
                     launcher_id: launcher_id.clone(),
-                    project: None, // TODO: launcherから取得
+                    project,
+                    tool_type,
                     status,
                     confidence: 1.0, // 簡易実装では固定値
                     evidence: Vec::new(), // 簡易実装では空
@@ -233,6 +240,7 @@ mod tests {
         let launcher = LauncherInfo {
             id: generate_connection_id(),
             project: Some("test".to_string()),
+            tool_type: "Claude".to_string(),
             claude_args: vec!["--help".to_string()],
             working_dir: "/tmp".into(),
             connected_at: Utc::now(),

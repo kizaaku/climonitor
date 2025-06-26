@@ -37,6 +37,7 @@ impl ToolWrapper {
         self.working_dir.as_ref()
     }
 
+
     /// CLI ツール プロセスを起動（従来のパイプベース）
     pub async fn spawn(&self) -> Result<Child> {
         let mut cmd = Command::new(self.tool.command_name());
