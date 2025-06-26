@@ -106,6 +106,13 @@ impl ScreenStateDetector {
 
     /// UI boxの内容から状態を判定
     fn analyze_ui_box_content(&self, ui_box: &UIBox) -> Option<SessionState> {
+        if self.verbose {
+            debug_println_raw(&format!("🔍 [ANALYZING_UI_BOX] {} content lines", ui_box.content_lines.len()));
+            for (i, line) in ui_box.content_lines.iter().enumerate() {
+                debug_println_raw(&format!("  Content[{}]: '{}'", i, line));
+            }
+        }
+
         // 1. UI box内容での承認プロンプト検出（最優先）
         for content_line in &ui_box.content_lines {
             if content_line.contains("Do you want") ||
