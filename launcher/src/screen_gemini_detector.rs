@@ -1,7 +1,6 @@
 // screen_gemini_detector.rs - Screen buffer based Gemini state detector
 
-use crate::cli_tool::CliToolType;
-use crate::screen_state_detector::ScreenStateDetector;
+use crate::screen_buffer::ScreenBuffer;
 use crate::session_state::SessionState;
 use crate::state_detector::StateDetector;
 use climonitor_shared::SessionStatus;
@@ -9,17 +8,28 @@ use std::time::Instant;
 
 /// スクリーンバッファベースのGemini状態検出器
 pub struct ScreenGeminiStateDetector {
-    screen_detector: ScreenStateDetector,
+    screen_buffer: ScreenBuffer,
+    current_state: SessionState,
     last_state_change: Option<Instant>,
     verbose: bool,
 }
 
 impl ScreenGeminiStateDetector {
     pub fn new(verbose: bool) -> Self {
-        let screen_detector = ScreenStateDetector::new(CliToolType::Gemini, verbose);
+        // 実際のターミナルサイズを取得
+        let pty_size = crate::cli_tool::get_pty_size();
+        let screen_buffer = ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
+
+        if verbose {
+            eprintln!(
+                "🖥️  [GEMINI_INIT] Initialized screen buffer with {}x{} (rows x cols)",
+                pty_size.rows, pty_size.cols
+            );
+        }
 
         Self {
-            screen_detector,
+            screen_buffer,
+            current_state: SessionState::Connected,
             last_state_change: None,
             verbose,
         }
@@ -27,8 +37,8 @@ impl ScreenGeminiStateDetector {
 
     /// Gemini固有の状態検出: スピナーとUI boxの組み合わせで判定
     fn detect_gemini_state(&mut self) -> Option<SessionState> {
-        let screen_lines = self.screen_detector.get_screen_lines();
-        let ui_boxes = self.screen_detector.get_ui_boxes();
+        let screen_lines = self.screen_buffer.get_screen_lines();
+        let ui_boxes = self.screen_buffer.find_ui_boxes();
 
         // UI boxがある場合は通常の検出ロジック（入力待ち状態など）
         if !ui_boxes.is_empty() {
@@ -124,27 +134,28 @@ impl ScreenGeminiStateDetector {
 impl StateDetector for ScreenGeminiStateDetector {
     fn process_output(&mut self, output: &str) -> Option<SessionState> {
         // 基本的なスクリーンバッファ処理
-        let _base_state = self.screen_detector.process_output(output);
+        let bytes = output.as_bytes();
+        self.screen_buffer.process_data(bytes);
 
         // Gemini特有の検出ロジックを適用
         if let Some(gemini_state) = self.detect_gemini_state() {
             let now = Instant::now();
 
             // 状態変化の記録
-            if &gemini_state != self.screen_detector.current_state() {
+            if &gemini_state != &self.current_state {
                 self.last_state_change = Some(now);
 
                 if self.verbose {
                     eprintln!(
                         "🎯 [GEMINI_STATE_CHANGE] {:?} → {:?}",
-                        self.screen_detector.current_state(),
+                        self.current_state,
                         gemini_state
                     );
                 }
             }
 
-            // screen_detectorの状態も更新
-            self.screen_detector.set_current_state(gemini_state.clone());
+            // 状態を更新
+            self.current_state = gemini_state.clone();
             return Some(gemini_state);
         }
 
@@ -152,26 +163,46 @@ impl StateDetector for ScreenGeminiStateDetector {
     }
 
     fn current_state(&self) -> &SessionState {
-        self.screen_detector.current_state()
+        &self.current_state
     }
 
     fn to_session_status(&self) -> SessionStatus {
-        self.screen_detector.to_session_status()
+        self.current_state.to_session_status()
     }
 
     fn debug_buffer(&self) {
-        self.screen_detector.debug_buffer()
+        let lines = self.screen_buffer.get_screen_lines();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_end();
+            if !trimmed.is_empty() {
+                eprintln!("  {i:2}: {trimmed}");
+            }
+        }
     }
 
     fn get_ui_execution_context(&self) -> Option<String> {
-        self.screen_detector.get_ui_execution_context()
+        let screen_lines = self.screen_buffer.get_screen_lines();
+        for line in &screen_lines {
+            if line.contains("(esc to cancel") {
+                return Some("処理中".to_string());
+            }
+        }
+        None
     }
 
     fn get_ui_above_text(&self) -> Option<String> {
-        self.screen_detector.get_ui_above_text()
+        let ui_boxes = self.screen_buffer.find_ui_boxes();
+        if let Some(latest_box) = ui_boxes.last() {
+            for line in &latest_box.above_lines {
+                if line.contains("⏺") {
+                    return Some(line.trim().to_string());
+                }
+            }
+        }
+        None
     }
 
     fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
-        self.screen_detector.resize_screen_buffer(rows, cols)
+        self.screen_buffer = crate::screen_buffer::ScreenBuffer::new(rows, cols, self.verbose);
     }
 }

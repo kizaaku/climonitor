@@ -1,7 +1,6 @@
 // screen_claude_detector.rs - Screen buffer based Claude state detector
 
-use crate::cli_tool::CliToolType;
-use crate::screen_state_detector::ScreenStateDetector;
+use crate::screen_buffer::ScreenBuffer;
 use crate::session_state::SessionState;
 use crate::state_detector::StateDetector;
 use climonitor_shared::SessionStatus;
@@ -9,7 +8,8 @@ use std::time::Instant;
 
 /// スクリーンバッファベースのClaude状態検出器
 pub struct ScreenClaudeStateDetector {
-    screen_detector: ScreenStateDetector,
+    screen_buffer: ScreenBuffer,
+    current_state: SessionState,
     previous_had_esc_interrupt: bool,
     last_state_change: Option<Instant>,
     verbose: bool,
@@ -17,10 +17,20 @@ pub struct ScreenClaudeStateDetector {
 
 impl ScreenClaudeStateDetector {
     pub fn new(verbose: bool) -> Self {
-        let screen_detector = ScreenStateDetector::new(CliToolType::Claude, verbose);
+        // 実際のターミナルサイズを取得
+        let pty_size = crate::cli_tool::get_pty_size();
+        let screen_buffer = ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
+
+        if verbose {
+            eprintln!(
+                "🖥️  [CLAUDE_INIT] Initialized screen buffer with {}x{} (rows x cols)",
+                pty_size.rows, pty_size.cols
+            );
+        }
 
         Self {
-            screen_detector,
+            screen_buffer,
+            current_state: SessionState::Connected,
             previous_had_esc_interrupt: false,
             last_state_change: None,
             verbose,
@@ -30,7 +40,7 @@ impl ScreenClaudeStateDetector {
     /// Claude固有の完了状態検出: "esc to interrupt"の有無で判定
     fn detect_claude_completion_state(&mut self) -> Option<SessionState> {
         // 現在の画面に"esc to interrupt"があるかチェック
-        let screen_lines = self.screen_detector.get_screen_lines();
+        let screen_lines = self.screen_buffer.get_screen_lines();
         let has_esc_interrupt = screen_lines
             .iter()
             .any(|line| line.contains("esc to interrupt"));
@@ -42,7 +52,7 @@ impl ScreenClaudeStateDetector {
                 "🔍 [CLAUDE_STATE] esc_interrupt: {} → {}, current: {}",
                 self.previous_had_esc_interrupt,
                 has_esc_interrupt,
-                self.screen_detector.current_state()
+                self.current_state
             );
         }
 
@@ -65,42 +75,95 @@ impl ScreenClaudeStateDetector {
             return Some(SessionState::Busy);
         }
 
-        // 状態変化なし、基底クラスの判定を使用
+        // 状態変化なし、基本的なUI box検出を実行
         self.previous_had_esc_interrupt = has_esc_interrupt;
+        
+        // UI boxからの基本的な状態検出
+        let ui_boxes = self.screen_buffer.find_ui_boxes();
+        if let Some(latest_box) = ui_boxes.last() {
+            // 承認プロンプト検出
+            for content_line in &latest_box.content_lines {
+                if content_line.contains("Do you want")
+                    || content_line.contains("Would you like")
+                    || content_line.contains("May I")
+                    || content_line.contains("proceed?")
+                    || content_line.contains("y/n")
+                {
+                    return Some(SessionState::WaitingForInput);
+                }
+            }
+            
+            // IDE接続確認
+            for below_line in &latest_box.below_lines {
+                if below_line.contains("◯ IDE connected") {
+                    return Some(SessionState::Idle);
+                }
+            }
+        }
+        
         None
     }
 }
 
 impl StateDetector for ScreenClaudeStateDetector {
     fn process_output(&mut self, output: &str) -> Option<SessionState> {
-        // 基底クラスで画面バッファを更新
-        let _base_state = self.screen_detector.process_output(output);
+        // 画面バッファを更新
+        let bytes = output.as_bytes();
+        self.screen_buffer.process_data(bytes);
 
         // Claude固有の"esc to interrupt"ロジックを適用
-        self.detect_claude_completion_state()
+        if let Some(new_state) = self.detect_claude_completion_state() {
+            self.current_state = new_state.clone();
+            return Some(new_state);
+        }
+        
+        None
     }
 
     fn current_state(&self) -> &SessionState {
-        self.screen_detector.current_state()
+        &self.current_state
     }
 
     fn to_session_status(&self) -> SessionStatus {
-        self.screen_detector.to_session_status()
+        self.current_state.to_session_status()
     }
 
     fn debug_buffer(&self) {
-        self.screen_detector.debug_buffer()
+        // デバッグ用に画面内容を表示
+        let lines = self.screen_buffer.get_screen_lines();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_end();
+            if !trimmed.is_empty() {
+                eprintln!("  {i:2}: {trimmed}");
+            }
+        }
     }
 
     fn get_ui_execution_context(&self) -> Option<String> {
-        self.screen_detector.get_ui_execution_context()
+        // 簡単な実装：'esc to interrupt'があれば実行中
+        let screen_lines = self.screen_buffer.get_screen_lines();
+        for line in &screen_lines {
+            if line.contains("esc to interrupt") {
+                return Some("実行中".to_string());
+            }
+        }
+        None
     }
 
     fn get_ui_above_text(&self) -> Option<String> {
-        self.screen_detector.get_ui_above_text()
+        // UI box上のテキストを取得（基本実装）
+        let ui_boxes = self.screen_buffer.find_ui_boxes();
+        if let Some(latest_box) = ui_boxes.last() {
+            for line in &latest_box.above_lines {
+                if line.contains("⏺") {
+                    return Some(line.trim().to_string());
+                }
+            }
+        }
+        None
     }
 
     fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
-        self.screen_detector.resize_screen_buffer(rows, cols)
+        self.screen_buffer = crate::screen_buffer::ScreenBuffer::new(rows, cols, self.verbose);
     }
 }
