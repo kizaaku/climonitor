@@ -1,7 +1,5 @@
-pub mod claude_state_detector;
 pub mod claude_tool;
 pub mod cli_tool;
-pub mod gemini_state_detector;
 pub mod gemini_tool;
 pub mod launcher_client;
 pub mod screen_buffer;

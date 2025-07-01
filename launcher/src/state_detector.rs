@@ -3,32 +3,6 @@
 use crate::session_state::SessionState;
 use ccmonitor_shared::SessionStatus;
 
-/// 状態検出パターンの定義
-#[derive(Debug, Clone)]
-pub struct StatePatterns {
-    pub error_patterns: Vec<String>,
-    pub waiting_patterns: Vec<String>,
-    pub busy_patterns: Vec<String>,
-    pub idle_patterns: Vec<String>,
-}
-
-impl Default for StatePatterns {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StatePatterns {
-    pub fn new() -> Self {
-        Self {
-            error_patterns: Vec::new(),
-            waiting_patterns: Vec::new(),
-            busy_patterns: Vec::new(),
-            idle_patterns: Vec::new(),
-        }
-    }
-}
-
 /// 状態検出器の共通インターフェース
 pub trait StateDetector: Send + Sync {
     /// 新しい出力を処理して状態を更新
@@ -39,9 +13,6 @@ pub trait StateDetector: Send + Sync {
 
     /// SessionStateをプロトコル用のSessionStatusに変換
     fn to_session_status(&self) -> SessionStatus;
-
-    /// 状態検出パターンを取得
-    fn get_patterns(&self) -> &StatePatterns;
 
     /// デバッグ用：現在のバッファを表示
     fn debug_buffer(&self);
@@ -61,8 +32,8 @@ pub fn create_state_detector(tool_type: CliToolType, verbose: bool) -> Box<dyn S
         CliToolType::Claude => {
             Box::new(crate::screen_claude_detector::ScreenClaudeStateDetector::new(verbose))
         }
-        CliToolType::Gemini => Box::new(crate::gemini_state_detector::GeminiStateDetector::new(
-            verbose,
+        CliToolType::Gemini => Box::new(crate::screen_state_detector::ScreenStateDetector::new(
+            tool_type, verbose,
         )),
     }
 }

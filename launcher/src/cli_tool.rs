@@ -1,6 +1,5 @@
 // cli_tool.rs - CLI ツール共通インターフェース
 
-use anyhow::Result;
 use portable_pty::{CommandBuilder, PtySize};
 use std::path::Path;
 use terminal_size::{terminal_size, Height, Width};
@@ -15,12 +14,6 @@ pub trait CliTool: Send + Sync {
 
     /// プロジェクト名を推測
     fn guess_project_name(&self, args: &[String], working_dir: &Path) -> Option<String>;
-
-    /// ツール固有の引数検証
-    fn validate_args(&self, _args: &[String]) -> Result<()> {
-        // デフォルト実装：引数をそのまま受け入れる
-        Ok(())
-    }
 
     /// ツール固有のコマンド文字列生成
     fn to_command_string(&self, args: &[String]) -> String {

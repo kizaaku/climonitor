@@ -1,8 +1,9 @@
 // screen_state_detector.rs - Screen buffer based state detection
 
+use crate::cli_tool::CliToolType;
 use crate::screen_buffer::{ScreenBuffer, UIBox};
 use crate::session_state::SessionState;
-use crate::state_detector::{StateDetector, StatePatterns};
+use crate::state_detector::StateDetector;
 use ccmonitor_shared::SessionStatus;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -20,13 +21,13 @@ pub struct ScreenStateDetector {
     current_state: SessionState,
     ui_execution_context: Option<String>,
     ui_above_text: Option<String>,
-    patterns: StatePatterns,
+    tool_type: CliToolType,
     verbose: bool,
     last_busy_time: Option<Instant>,
 }
 
 impl ScreenStateDetector {
-    pub fn new(patterns: StatePatterns, verbose: bool) -> Self {
+    pub fn new(tool_type: CliToolType, verbose: bool) -> Self {
         // 実際のターミナルサイズを取得
         let pty_size = crate::cli_tool::get_pty_size();
         let screen_buffer =
@@ -44,7 +45,7 @@ impl ScreenStateDetector {
             current_state: SessionState::Connected,
             ui_execution_context: None,
             ui_above_text: None,
-            patterns,
+            tool_type,
             verbose,
             last_busy_time: None,
         }
@@ -281,12 +282,26 @@ impl ScreenStateDetector {
 
         // 1. UI box内容での承認プロンプト検出（最優先）
         for content_line in &ui_box.content_lines {
-            if content_line.contains("Do you want")
-                || content_line.contains("Would you like")
-                || content_line.contains("May I")
-                || content_line.contains("proceed?")
-                || content_line.contains("y/n")
-            {
+            let is_waiting = match self.tool_type {
+                CliToolType::Claude => {
+                    content_line.contains("Do you want")
+                        || content_line.contains("Would you like")
+                        || content_line.contains("May I")
+                        || content_line.contains("proceed?")
+                        || content_line.contains("y/n")
+                }
+                CliToolType::Gemini => {
+                    content_line.contains("Choose an option")
+                        || content_line.contains("Select a choice")
+                        || content_line.contains("Type your message")
+                        || content_line.contains("Enter your input")
+                        || content_line.contains("Y/n")
+                        || content_line.contains("y/N")
+                        || content_line.contains("proceed?")
+                }
+            };
+
+            if is_waiting {
                 if self.verbose {
                     debug_println_raw(&format!("⏳ [APPROVAL_DETECTED] {}", content_line));
                 }
@@ -296,13 +311,29 @@ impl ScreenStateDetector {
 
         // 2. 上の行（実行コンテキスト）での実行状態検出
         for above_line in &ui_box.above_lines {
-            if above_line.contains("esc to interrupt")
-                || above_line.contains("Musing")
-                || above_line.contains("Auto-updating")
-                || above_line.contains("Tool:")
-                || above_line.contains("Wizarding")
-                || above_line.contains("Baking")
-            {
+            let is_busy = match self.tool_type {
+                CliToolType::Claude => {
+                    above_line.contains("esc to interrupt")
+                        || above_line.contains("Musing")
+                        || above_line.contains("Auto-updating")
+                        || above_line.contains("Tool:")
+                        || above_line.contains("Wizarding")
+                        || above_line.contains("Baking")
+                }
+                CliToolType::Gemini => {
+                    above_line.contains("Processing")
+                        || above_line.contains("Generating")
+                        || above_line.contains("Thinking")
+                        || above_line.contains("AI is")
+                        || above_line.contains("Gemini is")
+                        || above_line.contains("Model is")
+                        || above_line.contains("Loading")
+                        || above_line.contains("🤖")
+                        || above_line.contains("🧠")
+                }
+            };
+
+            if is_busy {
                 if self.verbose {
                     debug_println_raw(&format!("⚡ [EXECUTION_ACTIVE] {}", above_line.trim()));
                 }
@@ -400,10 +431,6 @@ impl StateDetector for ScreenStateDetector {
         }
     }
 
-    fn get_patterns(&self) -> &StatePatterns {
-        &self.patterns
-    }
-
     fn debug_buffer(&self) {
         if self.verbose {
             debug_println_raw("🖥️  [SCREEN_BUFFER] Current screen content:");
@@ -427,26 +454,6 @@ impl StateDetector for ScreenStateDetector {
 }
 
 impl ScreenStateDetector {
-    /// ターミナルサイズ変更時にscreen bufferを再初期化
-    pub fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
-        if self.verbose {
-            debug_println_raw(&format!(
-                "🔄 [SCREEN_RESIZE] Resizing screen buffer to {}x{} (rows x cols)",
-                rows, cols
-            ));
-        }
-        self.screen_buffer = ScreenBuffer::new(rows, cols, self.verbose);
-    }
-
-    /// 現在のscreen bufferサイズを取得
-    pub fn get_screen_buffer_size(&self) -> (usize, usize) {
-        let lines = self.screen_buffer.get_screen_lines();
-        (
-            lines.len(),
-            if lines.is_empty() { 0 } else { lines[0].len() },
-        )
-    }
-
     /// 現在の画面行を取得（Claude固有状態検出用）
     pub fn get_screen_lines(&self) -> Vec<String> {
         self.screen_buffer.get_screen_lines()

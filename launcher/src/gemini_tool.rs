@@ -1,7 +1,6 @@
 // gemini_tool.rs - Gemini固有のツール実装
 
 use crate::cli_tool::CliTool;
-use anyhow::Result;
 use portable_pty::CommandBuilder;
 use std::path::Path;
 
@@ -63,12 +62,6 @@ impl CliTool for GeminiTool {
 
         None
     }
-
-    fn validate_args(&self, _args: &[String]) -> Result<()> {
-        // Gemini固有の引数検証（必要に応じて実装）
-        // 現在は特に制限なし
-        Ok(())
-    }
 }
 
 impl Default for GeminiTool {
@@ -106,13 +99,5 @@ mod tests {
 
         let result = tool.guess_project_name(&args, &working_dir);
         assert_eq!(result, Some("my-project".to_string()));
-    }
-
-    #[test]
-    fn test_gemini_tool_validate_args() {
-        let tool = GeminiTool::new();
-        let args = vec!["--help".to_string()];
-
-        assert!(tool.validate_args(&args).is_ok());
     }
 }

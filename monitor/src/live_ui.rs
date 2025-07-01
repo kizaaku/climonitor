@@ -82,14 +82,14 @@ impl LiveUI {
         }
 
         self.rendering = true;
-        
+
         // 画面クリア（初回以外）
         if self.last_update.is_some() {
             print!("\x1b[2J\x1b[H"); // ANSI: 画面クリア + カーソルを左上に移動
             use std::io::{self, Write};
             io::stdout().flush().unwrap();
         }
-        
+
         let now = Utc::now();
         self.last_update = Some(now);
 
