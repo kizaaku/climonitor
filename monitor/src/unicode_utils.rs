@@ -14,6 +14,6 @@ pub fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         let truncated_len = max_len.saturating_sub(3);
         let truncated: String = graphemes.into_iter().take(truncated_len).collect();
-        format!("{}...", truncated)
+        format!("{truncated}...")
     }
 }

@@ -59,7 +59,7 @@ impl Drop for TerminalGuard {
                 &self.original,
             ) {
                 if self.verbose {
-                    eprintln!("⚠️  Failed to restore terminal: {}", e);
+                    eprintln!("⚠️  Failed to restore terminal: {e}");
                 }
             }
         }
@@ -131,7 +131,8 @@ impl LauncherClient {
                 "🔄 Attempting to connect to monitor server at {}",
                 socket_path.display()
             );
-            eprintln!("🔍 Socket path exists: {}", socket_path.exists());
+            let path_exists = socket_path.exists();
+            eprintln!("🔍 Socket path exists: {path_exists}");
         }
 
         match tokio::net::UnixStream::connect(&socket_path).await {
@@ -148,8 +149,7 @@ impl LauncherClient {
             Err(e) => {
                 if self.verbose {
                     eprintln!(
-                        "⚠️  Failed to connect to monitor server: {}. Running without monitoring.",
-                        e
+                        "⚠️  Failed to connect to monitor server: {e}. Running without monitoring."
                     );
                 }
             }
@@ -242,7 +242,7 @@ impl LauncherClient {
         // 接続メッセージを送信
         if let Err(e) = self.send_connect_message().await {
             if self.verbose {
-                eprintln!("⚠️  Failed to send connect message: {}", e);
+                eprintln!("⚠️  Failed to send connect message: {e}");
             }
         } else if self.verbose {
             eprintln!("✅ Connect message sent successfully");
@@ -303,17 +303,17 @@ impl LauncherClient {
         match exit_status {
             Ok(status) => {
                 if self.verbose {
-                    eprintln!("🏁 Claude process exited with status: {:?}", status);
+                    eprintln!("🏁 Claude process exited with status: {status:?}");
                 }
             }
             Err(e) => {
                 if self.verbose {
-                    eprintln!("❌ Claude execution failed: {}", e);
+                    eprintln!("❌ Claude execution failed: {e}");
                 }
                 // エラー時でも切断メッセージを送信
                 if let Err(disconnect_err) = self.send_disconnect_message().await {
                     if self.verbose {
-                        eprintln!("⚠️  Failed to send disconnect message: {}", disconnect_err);
+                        eprintln!("⚠️  Failed to send disconnect message: {disconnect_err}");
                     }
                 }
                 // ソケット接続を明示的に閉じる
@@ -389,7 +389,8 @@ impl LauncherClient {
                 Ok(file) => Some(file),
                 Err(e) => {
                     if verbose {
-                        eprintln!("⚠️  Failed to open log file {}: {}", log_path.display(), e);
+                        let log_display = log_path.display();
+                        eprintln!("⚠️  Failed to open log file {log_display}: {e}");
                     }
                     None
                 }
@@ -403,7 +404,7 @@ impl LauncherClient {
             Ok(writer) => writer,
             Err(e) => {
                 if verbose {
-                    eprintln!("⚠️  Failed to get PTY writer: {}", e);
+                    eprintln!("⚠️  Failed to get PTY writer: {e}");
                 }
                 return;
             }
@@ -413,7 +414,7 @@ impl LauncherClient {
             Ok(reader) => reader,
             Err(e) => {
                 if verbose {
-                    eprintln!("⚠️  Failed to get PTY reader: {}", e);
+                    eprintln!("⚠️  Failed to get PTY reader: {e}");
                 }
                 return;
             }
@@ -495,7 +496,9 @@ impl LauncherClient {
                     // Note: PTYサイズの動的変更は構造上複雑なため、
                     // 新しい接続時に正しいサイズが設定されることを確保
                     if self.verbose {
-                        eprintln!("📏 New terminal size: {}x{}", new_size.cols, new_size.rows);
+                        let cols = new_size.cols;
+                        let rows = new_size.rows;
+                        eprintln!("📏 New terminal size: {cols}x{rows}");
                     }
                     // ループ継続
                 }
@@ -542,7 +545,7 @@ impl LauncherClient {
 
         let mut state_detector = create_state_detector(tool_type, verbose);
         let mut last_status = SessionStatus::Idle;
-        
+
         // ターミナルサイズ監視用
         let mut last_terminal_size = crate::cli_tool::get_pty_size();
         use std::io::Read;
@@ -566,7 +569,7 @@ impl LauncherClient {
                     // 標準出力に書き込み
                     if let Err(e) = stdout.write_all(data).await {
                         if verbose {
-                            eprintln!("⚠️  Failed to write to stdout: {}", e);
+                            eprintln!("⚠️  Failed to write to stdout: {e}");
                         }
                         break;
                     }
@@ -575,23 +578,28 @@ impl LauncherClient {
                     if let Some(ref mut log_file) = log_writer {
                         if let Err(e) = log_file.write_all(data).await {
                             if verbose {
-                                eprintln!("⚠️  Failed to write to log file: {}", e);
+                                eprintln!("⚠️  Failed to write to log file: {e}");
                             }
                         }
                     }
 
                     // ターミナルサイズ変更チェック
                     let current_terminal_size = crate::cli_tool::get_pty_size();
-                    if current_terminal_size.rows != last_terminal_size.rows 
-                        || current_terminal_size.cols != last_terminal_size.cols {
+                    if current_terminal_size.rows != last_terminal_size.rows
+                        || current_terminal_size.cols != last_terminal_size.cols
+                    {
                         if verbose {
-                            eprintln!("🔄 Terminal size changed: {}x{} -> {}x{}", 
-                                     last_terminal_size.cols, last_terminal_size.rows,
-                                     current_terminal_size.cols, current_terminal_size.rows);
+                            eprintln!(
+                                "🔄 Terminal size changed: {}x{} -> {}x{}",
+                                last_terminal_size.cols,
+                                last_terminal_size.rows,
+                                current_terminal_size.cols,
+                                current_terminal_size.rows
+                            );
                         }
                         state_detector.resize_screen_buffer(
-                            current_terminal_size.rows as usize, 
-                            current_terminal_size.cols as usize
+                            current_terminal_size.rows as usize,
+                            current_terminal_size.cols as usize,
                         );
                         last_terminal_size = current_terminal_size;
                     }
@@ -602,8 +610,7 @@ impl LauncherClient {
                         if new_status != last_status {
                             if verbose {
                                 eprintln!(
-                                    "🔄 Status changed: {:?} -> {:?}",
-                                    last_status, new_status
+                                    "🔄 Status changed: {last_status:?} -> {new_status:?}"
                                 );
                             }
                             last_status = new_status.clone();
@@ -628,7 +635,7 @@ impl LauncherClient {
                 }
                 Err(e) => {
                     if verbose {
-                        eprintln!("⚠️  PTY read error: {}", e);
+                        eprintln!("⚠️  PTY read error: {e}");
                     }
                     break;
                 }
@@ -665,21 +672,21 @@ impl LauncherClient {
 
                     if let Err(e) = pty_writer.write_all(data) {
                         if verbose {
-                            eprintln!("⚠️  Failed to write to PTY: {}", e);
+                            eprintln!("⚠️  Failed to write to PTY: {e}");
                         }
                         break;
                     }
 
                     if let Err(e) = pty_writer.flush() {
                         if verbose {
-                            eprintln!("⚠️  Failed to flush PTY: {}", e);
+                            eprintln!("⚠️  Failed to flush PTY: {e}");
                         }
                         break;
                     }
                 }
                 Err(e) => {
                     if verbose {
-                        eprintln!("⚠️  Stdin read error: {}", e);
+                        eprintln!("⚠️  Stdin read error: {e}");
                     }
                     break;
                 }
@@ -724,7 +731,7 @@ impl LauncherClient {
                     let _ = stream.flush().await;
 
                     if verbose {
-                        eprintln!("📤 Sent fallback status update: {:?}", status);
+                        eprintln!("📤 Sent fallback status update: {status:?}");
                     }
                 }
             }

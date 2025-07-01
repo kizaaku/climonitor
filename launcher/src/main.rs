@@ -58,8 +58,8 @@ async fn main() -> Result<()> {
 
     if verbose {
         println!("🔧 ccmonitor-launcher starting...");
-        println!("🛠️  Tool: {:?}", tool_type);
-        println!("📝 Args: {:?}", tool_args);
+        println!("🛠️  Tool: {tool_type:?}");
+        println!("📝 Args: {tool_args:?}");
     }
 
     // ツールを作成
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("❌ CLI tool execution failed: {}", e);
+                        eprintln!("❌ CLI tool execution failed: {e}");
                         #[cfg(unix)]
                         {
                             if let Some(guard) = _terminal_guard {
@@ -152,7 +152,7 @@ async fn main() -> Result<()> {
                 }
             }
             Err(e) => {
-                eprintln!("❌ CLI tool execution failed: {}", e);
+                eprintln!("❌ CLI tool execution failed: {e}");
                 std::process::exit(1);
             }
         }

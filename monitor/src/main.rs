@@ -49,7 +49,8 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
     if verbose {
         println!("🔧 Starting monitor server in verbose mode...");
         if let Some(ref log_path) = log_file {
-            println!("📝 Log file: {}", log_path.display());
+            let log_display = log_path.display();
+            println!("📝 Log file: {log_display}");
         }
     }
 
@@ -74,7 +75,7 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Monitor server error: {}", e);
+                    eprintln!("❌ Monitor server error: {e}");
                     return Err(e);
                 }
             }
@@ -88,7 +89,7 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Live UI error: {}", e);
+                    eprintln!("❌ Live UI error: {e}");
                     return Err(e);
                 }
             }

@@ -111,7 +111,7 @@ impl LiveUI {
         let terminal_width = get_terminal_width();
 
         println!("🔥 Claude Session Monitor - Live Mode");
-        println!("📊 Session: {}", stats.total_sessions);
+        println!("📊 Session: {stats}", stats = stats.total_sessions);
         println!("{}", "═".repeat(terminal_width));
     }
 
@@ -136,7 +136,7 @@ impl LiveUI {
         // セッション表示開始（ヘッダーなし）
 
         for (project_name, sessions) in filtered_sessions {
-            println!("  📁 {}:", project_name);
+            println!("  📁 {project_name}:");
 
             for session in sessions {
                 let status_icon = session.status.icon();
@@ -167,40 +167,36 @@ impl LiveUI {
                 let ui_above_display = if let Some(ref ui_text) = session.ui_above_text {
                     let terminal_width = get_terminal_width();
                     let available_width = terminal_width.saturating_sub(20); // 余白を考慮
-                    format!(" {}", truncate_str(ui_text, available_width))
+                    format!(" {ui_text}", ui_text = truncate_str(ui_text, available_width))
                 } else {
                     String::new()
                 };
 
                 println!(
-                    "    {}{} {}{} | {}{}",
-                    status_icon,
-                    tool_type_display,
-                    status_label,
-                    execution_indicator,
-                    elapsed,
-                    ui_above_display
+                    "    {status_icon}{tool_type_display} {status_label}{execution_indicator} | {elapsed}{ui_above_display}"
                 );
 
                 // 最新メッセージ表示
                 if let Some(ref message) = session.last_message {
                     let preview = truncate_str(message, 60);
-                    println!("      💬 {}", preview);
+                    println!("      💬 {preview}");
                 }
 
                 // Usage reset time display
                 if let Some(ref reset_time) = session.usage_reset_time {
-                    println!("      ⏰ Usage resets at: {}", reset_time);
+                    println!("      ⏰ Usage resets at: {reset_time}");
                 }
 
                 // 詳細情報（verbose モード）
                 if self.verbose && !session.evidence.is_empty() {
-                    println!("      🔍 Evidence: {}", session.evidence.join(", "));
+                    let evidence = session.evidence.join(", ");
+                    println!("      🔍 Evidence: {evidence}");
                 }
 
                 if self.verbose {
                     if let Some(ref context) = session.launcher_context {
-                        println!("      📝 Context: {}", truncate_str(context, 50));
+                        let context_display = truncate_str(context, 50);
+                        println!("      📝 Context: {context_display}");
                     }
                 }
             }
@@ -225,13 +221,17 @@ fn format_duration_since(time: DateTime<Utc>) -> String {
     let duration = now.signed_duration_since(time);
 
     if duration.num_seconds() < 60 {
-        format!("{}s ago", duration.num_seconds())
+        let seconds = duration.num_seconds();
+        format!("{seconds}s ago")
     } else if duration.num_minutes() < 60 {
-        format!("{}m ago", duration.num_minutes())
+        let minutes = duration.num_minutes();
+        format!("{minutes}m ago")
     } else if duration.num_hours() < 24 {
-        format!("{}h ago", duration.num_hours())
+        let hours = duration.num_hours();
+        format!("{hours}h ago")
     } else {
-        format!("{}d ago", duration.num_days())
+        let days = duration.num_days();
+        format!("{days}d ago")
     }
 }
 
@@ -248,7 +248,7 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
         .collect();
 
     println!("📊 Claude Session Monitor - Snapshot");
-    println!("Session: {}", stats.total_sessions);
+    println!("Session: {stats}", stats = stats.total_sessions);
     println!("{}", "═".repeat(50));
 
     if filtered_sessions.is_empty() {
@@ -258,8 +258,9 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
     }
 
     for (project_name, sessions) in filtered_sessions {
-        println!("\n📁 Project: {}", project_name);
-        println!("   Sessions: {}", sessions.len());
+        println!("\n📁 Project: {project_name}");
+        let session_count = sessions.len();
+        println!("   Sessions: {session_count}");
 
         for session in sessions {
             let status_icon = session.status.icon();
@@ -276,11 +277,12 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
 
             if let Some(ref message) = session.last_message {
                 let preview = truncate_str(message, 57);
-                println!("     💬 {}", preview);
+                println!("     💬 {preview}");
             }
 
             if verbose && !session.evidence.is_empty() {
-                println!("     🔍 {}", session.evidence.join(", "));
+                let evidence = session.evidence.join(", ");
+                println!("     🔍 {evidence}");
             }
         }
     }
