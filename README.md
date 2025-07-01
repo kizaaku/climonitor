@@ -1,31 +1,32 @@
-# Claude Code Monitor (ccmonitor)
+# CLI Tool Monitor (climonitor)
 
-Claude Codeセッションのリアルタイム監視とPTY統合による高精度状態検出ツール
+Claude CodeとGemini CLIセッションのリアルタイム監視とPTY統合による高精度状態検出ツール
 
-[![CI](https://github.com/username/ccmonitor/workflows/CI/badge.svg)](https://github.com/username/ccmonitor/actions)
+[![CI](https://github.com/kizaaku/climonitor/workflows/CI/badge.svg)](https://github.com/kizaaku/climonitor/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 特徴
 
-- ⚡ **リアルタイム監視**: PTY統合によるClaude Codeの直接監視
+- ⚡ **リアルタイム監視**: PTY統合によるCLIツールの直接監視
 - 🎯 **高精度状態検出**: VTEパーサーベースの端末解析とUIボックス検出
 - 📊 **クライアント・サーバー構成**: 複数セッションの同時監視
 - 🖥️ **ターミナルUI**: セッション状態のリアルタイムダッシュボード
 - 🔧 **マルチツール対応**: Claude CodeとGemini CLIに対応
+- 🤖 **専用状態検出**: ツール別に最適化された独立した状態検出器
 - 🌍 **Unicode対応**: 日本語テキストと絵文字の適切な処理
 
 ## デモ
 
 ```
-┌─ ccmonitor --live ─────────────────────────────────────┐
-🔥 Claude Session Monitor - Live Mode
+┌─ climonitor --live ────────────────────────────────────┐
+🔥 CLI Tool Monitor - Live Mode
 📊 Session: 2
 ══════════════════════════════════════════════════════════════════════
   📁 folder1:
-    🔵 ✨ 完了 | 10s ago
+    🔵 ✨ 完了 | 10s ago   [Gemini]
 
   📁 folder2:
-    🔵 🤖 完了 | 1m ago
+    🔵 🤖 完了 | 1m ago    [Claude]
 
 🔄 Last update: 01:02:05 | Press Ctrl+C to exit
 └────────────────────────────────────────────────────────┘
@@ -38,10 +39,10 @@ Claude Codeセッションのリアルタイム監視とPTY統合による高精
 cargo build --release
 
 # ターミナル1: Claude Codeを監視付きで起動
-ccmonitor-launcher claude
+climonitor-launcher claude
 
 # ターミナル2: リアルタイム状態表示
-ccmonitor --live
+climonitor --live
 ```
 
 ## インストール
@@ -53,8 +54,8 @@ ccmonitor --live
 cargo install --path .
 
 # 実行
-ccmonitor --live
-ccmonitor-launcher claude
+climonitor --live
+climonitor-launcher claude
 ```
 
 ### バイナリを直接使用
@@ -64,8 +65,8 @@ ccmonitor-launcher claude
 cargo build --release
 
 # 実行ファイルを直接使用
-./target/release/ccmonitor --live
-./target/release/ccmonitor-launcher claude
+./target/release/climonitor --live
+./target/release/climonitor-launcher claude
 ```
 
 ## 基本的な使い方
@@ -74,35 +75,39 @@ cargo build --release
 
 ```bash
 # 基本的な監視付き起動
-ccmonitor-launcher claude
+climonitor-launcher claude
+climonitor-launcher gemini
 
 # 詳細なデバッグ出力付き
-ccmonitor-launcher --verbose claude
+climonitor-launcher --verbose claude
+climonitor-launcher --verbose gemini
 
-# 任意のClaude引数をサポート
-ccmonitor-launcher claude --project myproject
-ccmonitor-launcher claude --help
+# 任意のツール引数をサポート
+climonitor-launcher claude --project myproject
+climonitor-launcher gemini --project myproject
+climonitor-launcher claude --help
 ```
 
 ### 監視ダッシュボード
 
 ```bash
 # リアルタイムライブ表示
-ccmonitor --live
+climonitor --live
 
 # 詳細ログ付きライブモード
-ccmonitor --live --verbose
+climonitor --live --verbose
 
 # 一回限りのスナップショット
-ccmonitor --no-tui
+climonitor --no-tui
 ```
 
 ### ログファイル機能
 
 ```bash
 # 出力をファイルに記録
-ccmonitor --live --log-file /path/to/output.log
-ccmonitor-launcher --log-file /path/to/session.log claude
+climonitor --live --log-file /path/to/output.log
+climonitor-launcher --log-file /path/to/session.log claude
+climonitor-launcher --log-file /path/to/session.log gemini
 ```
 
 ## セッション状態
@@ -110,9 +115,9 @@ ccmonitor-launcher --log-file /path/to/session.log claude
 | 状態 | アイコン | 説明 |
 |------|----------|------|
 | **接続中** | 🔗 | PTYセッションが実行中 |
-| **アイドル** | 🔵 | UIボックスが表示されているが操作なし |
-| **実行中** | 🔵 | "ツール"、"自動更新"、"思考中"パターン検出 |
-| **入力待ち** | ⏳ | "続行しますか？"、"y/n"などの確認待ち |
+| **アイドル** | 🔵 | UIボックスが表示されているが操作なし、`>`プロンプト表示（Gemini） |
+| **実行中** | 🔵 | "esc to interrupt"（Claude）、"(esc to cancel"（Gemini）パターン検出 |
+| **入力待ち** | ⏳ | "続行しますか？"、"Allow execution?"、"y/n"などの確認待ち |
 | **エラー** | 🔴 | "✗"、"failed"、"Error"パターン検出 |
 
 ## アーキテクチャ
@@ -120,19 +125,45 @@ ccmonitor-launcher --log-file /path/to/session.log claude
 ### PTY統合モニタリング
 
 ```
-┌─ ccmonitor-launcher ─┐    ┌─ ccmonitor --live ─┐
-│ PTY Integration      │───>│ Monitor Server     │
-│ ├─ Claude Code       │    │ ├─ LiveUI          │
-│ ├─ VTE Parser        │    │ ├─ SessionManager  │
-│ └─ State Detection   │    │ └─ Unix Socket     │
-└──────────────────────┘    └────────────────────┘
+┌─ climonitor-launcher ─┐    ┌─ climonitor --live ─┐
+│ PTY Integration       │───>│ Monitor Server      │
+│ ├─ Claude Code        │    │ ├─ LiveUI           │
+│ ├─ Gemini CLI         │    │ ├─ SessionManager   │
+│ ├─ VTE Parser         │    │ └─ Unix Socket      │
+│ └─ State Detection    │    │                     │
+│   ├─ ClaudeDetector   │    │                     │
+│   └─ GeminiDetector   │    │                     │
+└───────────────────────┘    └─────────────────────┘
 ```
 
 1. **クライアント・サーバー構成**: 中央監視サーバーと複数のランチャークライアント
-2. **PTY統合**: 真の端末エミュレーションによるClaude Codeとの透明な相互作用
-3. **VTEパーサー**: 完全な画面バッファ解析による正確な状態検出
-4. **Unix Domain Socket**: 高速クライアント・サーバー通信
-5. **リアルタイム更新**: 画面バッファ解析による即座の状態変化検出
+2. **PTY統合**: 真の端末エミュレーションによるCLIツールとの透明な相互作用
+3. **独立型状態検出器**: ツール別に最適化された専用検出ロジック
+4. **VTEパーサー**: 完全な画面バッファ解析による正確な状態検出
+5. **Unix Domain Socket**: 高速クライアント・サーバー通信
+6. **リアルタイム更新**: 画面バッファ解析による即座の状態変化検出
+
+### 独立型状態検出器アーキテクチャ
+
+各CLIツール用に最適化された専用の状態検出器を実装：
+
+#### Claude状態検出器 (`ScreenClaudeStateDetector`)
+- **主要パターン**: `"esc to interrupt"` による実行状態の高精度検出
+- **完了検出**: `"esc to interrupt"` の出現・消失による状態遷移
+- **承認プロンプト**: `"Do you want"`, `"May I"`, `"proceed?"` パターン
+- **実行コンテキスト**: `"⏺ 実行中"` 表示による詳細情報
+
+#### Gemini状態検出器 (`ScreenGeminiStateDetector`)
+- **主要パターン**: `"(esc to cancel"` による処理中状態検出
+- **アイドル検出**: `">"` で始まるプロンプト表示
+- **承認プロンプト**: `"Allow execution?"`, `"waiting for user confirmation"`
+- **統計表示**: セッション終了後の `"Cumulative Stats"` 検出
+
+#### 共通機能
+- **完全独立**: 各検出器が`ScreenBuffer`を直接管理
+- **ScreenBuffer統合**: VTEパーサーによる画面状態の完全解析
+- **UI Box解析**: ╭╮╰╯ Unicode罫線要素の自動検出と内容抽出
+- **エラー処理**: 統一されたエラーパターン検出
 
 ### VTEパーサーによる画面バッファ状態検出
 
@@ -166,8 +197,9 @@ cargo run -- --no-tui              # 非対話スナップショットモード
 cargo run -- --verbose             # デバッグ用詳細出力
 
 # 状態検出のデバッグ（人的テスト）
-ccmonitor-launcher --verbose claude # 詳細な状態検出プロセス表示
-ccmonitor-launcher --verbose claude --help  # シンプルなコマンドでテスト
+climonitor-launcher --verbose claude # 詳細な状態検出プロセス表示
+climonitor-launcher --verbose gemini # Gemini状態検出のテスト
+climonitor-launcher --verbose claude --help  # シンプルなコマンドでテスト
 ```
 
 ### テストの実行
@@ -203,7 +235,8 @@ cargo clippy -- -D warnings
 
 ```bash
 # デバッグログをファイルに保存
-ccmonitor-launcher --verbose claude 2> debug.log
+climonitor-launcher --verbose claude 2> debug.log
+climonitor-launcher --verbose gemini 2> debug.log
 
 # ログ内容を確認
 tail -f debug.log
@@ -229,7 +262,7 @@ grep "SCREEN" debug.log
 export ANTHROPIC_LOG=debug
 
 # カスタムソケットパス（オプション）
-export CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
+export CLIMONITOR_SOCKET_PATH=/tmp/climonitor.sock
 
 # Rustログレベル
 export RUST_LOG=debug
@@ -240,7 +273,7 @@ export RUST_LOG=debug
 ### Shared ライブラリ
 
 ```rust
-use ccmonitor_shared::{SessionStatus, LauncherMessage, MonitorMessage};
+use climonitor_shared::{SessionStatus, LauncherMessage, MonitorMessage};
 
 // セッション状態の確認
 let status = SessionStatus::Busy;
@@ -250,7 +283,7 @@ println!("Status: {} ({})", status.description(), status.icon());
 ### 独自の状態検出器実装
 
 ```rust
-use ccmonitor_launcher::{StateDetector, StatePatterns};
+use climonitor_launcher::{StateDetector, ScreenClaudeStateDetector, ScreenGeminiStateDetector};
 
 struct CustomStateDetector {
     patterns: StatePatterns,
@@ -292,4 +325,4 @@ GitHub Actionsを使用した継続的統合：
 
 ---
 
-**ccmonitor**は、Claude Codeセッションの監視とワークフロー最適化のための強力なツールです。リアルタイム状態検出により、開発者の生産性向上をサポートします。
+**climonitor**は、Claude CodeとGemini CLIセッションの監視とワークフロー最適化のための強力なツールです。独立型状態検出器とリアルタイム監視により、開発者の生産性向上をサポートします。
