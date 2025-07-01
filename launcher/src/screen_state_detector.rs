@@ -472,4 +472,14 @@ impl ScreenStateDetector {
     pub fn get_screen_lines(&self) -> Vec<String> {
         self.screen_buffer.get_screen_lines()
     }
+
+    /// 現在のUI boxを取得（Gemini固有状態検出用）
+    pub fn get_ui_boxes(&self) -> Vec<crate::screen_buffer::UIBox> {
+        self.screen_buffer.find_ui_boxes()
+    }
+
+    /// 現在の状態を設定（Gemini固有状態検出用）
+    pub fn set_current_state(&mut self, state: SessionState) {
+        self.current_state = state;
+    }
 }

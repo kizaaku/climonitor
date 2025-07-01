@@ -35,8 +35,8 @@ pub fn create_state_detector(tool_type: CliToolType, verbose: bool) -> Box<dyn S
         CliToolType::Claude => {
             Box::new(crate::screen_claude_detector::ScreenClaudeStateDetector::new(verbose))
         }
-        CliToolType::Gemini => Box::new(crate::screen_state_detector::ScreenStateDetector::new(
-            tool_type, verbose,
-        )),
+        CliToolType::Gemini => {
+            Box::new(crate::screen_gemini_detector::ScreenGeminiStateDetector::new(verbose))
+        }
     }
 }
