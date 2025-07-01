@@ -29,7 +29,8 @@ impl SessionManager {
     /// launcher接続処理
     pub fn add_launcher(&mut self, launcher: LauncherInfo) -> Result<(), String> {
         if self.launchers.contains_key(&launcher.id) {
-            return Err(format!("Launcher {} already exists", launcher.id));
+            let launcher_id = &launcher.id;
+            return Err(format!("Launcher {launcher_id} already exists"));
         }
 
         self.launchers.insert(launcher.id.clone(), launcher);

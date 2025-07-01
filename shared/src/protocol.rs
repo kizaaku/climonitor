@@ -148,5 +148,5 @@ pub fn generate_connection_id() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    format!("launcher-{:x}", timestamp)
+    format!("launcher-{timestamp:x}")
 }

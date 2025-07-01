@@ -95,12 +95,12 @@ impl MonitorServer {
                         Ok((stream, _)) => {
                             let connection_id = ccmonitor_shared::generate_connection_id();
                             if self.verbose {
-                                println!("🔗 New connection: {}", connection_id);
+                                println!("🔗 New connection: {connection_id}");
                             }
                             self.handle_new_connection(connection_id, stream).await?;
                         }
                         Err(e) => {
-                            eprintln!("❌ Accept error: {}", e);
+                            eprintln!("❌ Accept error: {e}");
                         }
                     }
                 }
@@ -164,7 +164,7 @@ impl MonitorServer {
             .await
             {
                 if verbose {
-                    eprintln!("⚠️  Connection {} error: {}", connection_id, e);
+                    eprintln!("⚠️  Connection {connection_id} error: {e}");
                 }
             }
         })
@@ -187,8 +187,7 @@ impl MonitorServer {
                 None => {
                     if verbose {
                         eprintln!(
-                            "⚠️  Connection {} not found in connections map",
-                            connection_id
+                            "⚠️  Connection {connection_id} not found in connections map"
                         );
                     }
                     return Err(anyhow::anyhow!("Connection not found: {}", connection_id));
@@ -209,7 +208,7 @@ impl MonitorServer {
                 Ok(0) => {
                     // 接続が閉じられた
                     if verbose {
-                        println!("📴 Connection closed: {}", connection_id);
+                        println!("📴 Connection closed: {connection_id}");
                     }
 
                     // 接続が切断された場合、関連するlauncherを削除
@@ -231,12 +230,12 @@ impl MonitorServer {
 
                     if let Ok(message) = serde_json::from_str::<LauncherToMonitor>(buffer.trim()) {
                         if verbose {
-                            println!("📨 Parsed message from {}: {:?}", connection_id, message);
+                            println!("📨 Parsed message from {connection_id}: {message:?}");
                         }
 
                         // セッションマネージャーで処理
                         if let Err(e) = session_manager.write().await.handle_message(message) {
-                            eprintln!("⚠️  Message handling error: {}", e);
+                            eprintln!("⚠️  Message handling error: {e}");
                         } else if verbose {
                             println!("✅ Message processed successfully");
                         }
@@ -253,7 +252,7 @@ impl MonitorServer {
                 }
                 Err(e) => {
                     if verbose {
-                        eprintln!("📡 Read error from {}: {}", connection_id, e);
+                        eprintln!("📡 Read error from {connection_id}: {e}");
                     }
 
                     // エラーで接続が切断された場合も、関連するlauncherを削除

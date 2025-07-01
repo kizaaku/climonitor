@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 /// RAWモード対応のデバッグ出力（改行を正しく処理）
 fn debug_println_raw(msg: &str) {
     let mut stderr = std::io::stderr();
-    let _ = write!(stderr, "\r\n{}\r\n", msg);
+    let _ = write!(stderr, "\r\n{msg}\r\n");
     let _ = stderr.flush();
 }
 
@@ -67,7 +67,7 @@ impl ScreenStateDetector {
             for (i, line) in lines.iter().enumerate() {
                 let trimmed = line.trim_end();
                 if !trimmed.is_empty() {
-                    debug_println_raw(&format!("  {:2}: {}", i, trimmed));
+                    debug_println_raw(&format!("  {i:2}: {trimmed}"));
                 }
             }
         }
@@ -170,8 +170,7 @@ impl ScreenStateDetector {
 
                     if self.verbose {
                         debug_println_raw(&format!(
-                            "⏺ [UI_ABOVE_TEXT] Found closest: {}",
-                            text_after_circle
+                            "⏺ [UI_ABOVE_TEXT] Found closest: {text_after_circle}"
                         ));
                     }
                 }
@@ -276,7 +275,7 @@ impl ScreenStateDetector {
                 ui_box.content_lines.len()
             ));
             for (i, line) in ui_box.content_lines.iter().enumerate() {
-                debug_println_raw(&format!("  Content[{}]: '{}'", i, line));
+                debug_println_raw(&format!("  Content[{i}]: '{line}'"));
             }
         }
 
@@ -303,7 +302,7 @@ impl ScreenStateDetector {
 
             if is_waiting {
                 if self.verbose {
-                    debug_println_raw(&format!("⏳ [APPROVAL_DETECTED] {}", content_line));
+                    debug_println_raw(&format!("⏳ [APPROVAL_DETECTED] {content_line}"));
                 }
                 return Some(SessionState::WaitingForInput);
             }
@@ -328,7 +327,8 @@ impl ScreenStateDetector {
 
             if is_busy {
                 if self.verbose {
-                    debug_println_raw(&format!("⚡ [EXECUTION_ACTIVE] {}", above_line.trim()));
+                    let trimmed_line = above_line.trim();
+                    debug_println_raw(&format!("⚡ [EXECUTION_ACTIVE] {trimmed_line}"));
                 }
                 return Some(SessionState::Busy);
             }
@@ -341,14 +341,16 @@ impl ScreenStateDetector {
                 || below_line.contains("Error")
             {
                 if self.verbose {
-                    debug_println_raw(&format!("🔴 [ERROR_DETECTED] {}", below_line.trim()));
+                    let trimmed_line = below_line.trim();
+                    debug_println_raw(&format!("🔴 [ERROR_DETECTED] {trimmed_line}"));
                 }
                 return Some(SessionState::Error);
             }
 
             if below_line.contains("◯ IDE connected") {
                 if self.verbose {
-                    debug_println_raw(&format!("💻 [IDE_CONNECTED] {}", below_line.trim()));
+                    let trimmed_line = below_line.trim();
+                    debug_println_raw(&format!("💻 [IDE_CONNECTED] {trimmed_line}"));
                 }
                 return Some(SessionState::Idle);
             }
@@ -401,7 +403,7 @@ impl StateDetector for ScreenStateDetector {
             self.current_state = new_state.clone();
 
             if self.verbose {
-                debug_println_raw(&format!("🎯 [STATE_CHANGE] {} → {}", old_state, new_state));
+                debug_println_raw(&format!("🎯 [STATE_CHANGE] {old_state} → {new_state}"));
             }
 
             Some(new_state)
@@ -431,7 +433,8 @@ impl StateDetector for ScreenStateDetector {
             for (i, line) in lines.iter().enumerate() {
                 let trimmed = line.trim_end();
                 if !trimmed.is_empty() {
-                    debug_println_raw(&format!("  {:2}: {}", i + 1, trimmed));
+                    let line_num = i + 1;
+                    debug_println_raw(&format!("  {line_num:2}: {trimmed}"));
                 }
             }
         }
@@ -448,8 +451,7 @@ impl StateDetector for ScreenStateDetector {
     fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
         if self.verbose {
             debug_println_raw(&format!(
-                "🔄 [SCREEN_RESIZE] Resizing screen buffer to {}x{} (rows x cols)",
-                rows, cols
+                "🔄 [SCREEN_RESIZE] Resizing screen buffer to {rows}x{cols} (rows x cols)"
             ));
         }
         self.screen_buffer = ScreenBuffer::new(rows, cols, self.verbose);

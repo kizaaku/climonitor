@@ -75,8 +75,7 @@ impl ScreenBuffer {
 
         if verbose {
             eprintln!(
-                "🖥️  [BUFFER_INIT] Screen buffer: {}x{} (PTY {}x{} + 1 col)",
-                rows, buffer_cols, rows, cols
+                "🖥️  [BUFFER_INIT] Screen buffer: {rows}x{buffer_cols} (PTY {rows}x{cols} + 1 col)"
             );
         }
 
@@ -164,7 +163,8 @@ impl ScreenBuffer {
             );
             for (i, line) in lines.iter().enumerate() {
                 if !line.trim().is_empty() {
-                    eprintln!("  {}: '{}'", start_row + i, line);
+                    let row_num = start_row + i;
+                    eprintln!("  {row_num}: '{line}'");
                 }
             }
         }
@@ -186,8 +186,10 @@ impl ScreenBuffer {
                     }
 
                     if self.verbose {
-                        eprintln!("📦 [COMPLETE_BOX] Found complete UI box at rows {}-{} with {} content lines", 
-                                 ui_box.start_row, ui_box.end_row, ui_box.content_lines.len());
+                        let start_row = ui_box.start_row;
+                        let end_row = ui_box.end_row;
+                        let content_count = ui_box.content_lines.len();
+                        eprintln!("📦 [COMPLETE_BOX] Found complete UI box at rows {start_row}-{end_row} with {content_count} content lines");
                     }
 
                     boxes.push(ui_box);
@@ -271,8 +273,7 @@ impl ScreenBuffer {
             if line.trim_start().starts_with('╭') {
                 if self.verbose {
                     eprintln!(
-                        "📦 [INVALID_BOX] Found nested ╭ at row {} while parsing box from row {}",
-                        idx, start_row
+                        "📦 [INVALID_BOX] Found nested ╭ at row {idx} while parsing box from row {start_row}"
                     );
                 }
                 return None;
@@ -515,8 +516,7 @@ impl ScreenBuffer {
 
         if self.verbose && actual_insert > 0 {
             eprintln!(
-                "📝 [INSERT_LINES] Inserting {} lines at row {}",
-                actual_insert, insert_row
+                "📝 [INSERT_LINES] Inserting {actual_insert} lines at row {insert_row}"
             );
         }
 
@@ -546,8 +546,7 @@ impl ScreenBuffer {
 
         if self.verbose && actual_delete > 0 {
             eprintln!(
-                "🗑️  [DELETE_LINES] Deleting {} lines at row {}",
-                actual_delete, delete_row
+                "🗑️  [DELETE_LINES] Deleting {actual_delete} lines at row {delete_row}"
             );
         }
 
@@ -699,7 +698,7 @@ impl Perform for ScreenBuffer {
             }
             _ => {
                 if self.verbose {
-                    eprintln!("Unhandled execute: 0x{:02x}", byte);
+                    eprintln!("Unhandled execute: 0x{byte:02x}");
                 }
             }
         }
@@ -728,7 +727,7 @@ impl Perform for ScreenBuffer {
     /// CSI（Control Sequence Introducer）ディスパッチ
     fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, c: char) {
         if self.verbose {
-            let param_str: Vec<String> = params.iter().map(|p| format!("{:?}", p)).collect();
+            let param_str: Vec<String> = params.iter().map(|p| format!("{p:?}")).collect();
             eprintln!(
                 "🎛️  [CSI] Dispatching '{}' with params: [{}]",
                 c,
@@ -746,8 +745,7 @@ impl Perform for ScreenBuffer {
 
                 if self.verbose {
                     eprintln!(
-                        "📍 [CURSOR_POS] Moving cursor to ({}, {}) [params: row={}, col={}]",
-                        new_row, new_col, row, col
+                        "📍 [CURSOR_POS] Moving cursor to ({new_row}, {new_col}) [params: row={row}, col={col}]"
                     );
                 }
 
@@ -799,8 +797,9 @@ impl Perform for ScreenBuffer {
                     1 => {
                         // 画面先頭からカーソルまで消去
                         if self.verbose {
-                            eprintln!("🧹 [CLEAR_TO_START] Clearing from start of screen to cursor ({}, {})", 
-                                     self.cursor_row, self.cursor_col);
+                            let cursor_row = self.cursor_row;
+                            let cursor_col = self.cursor_col;
+                            eprintln!("🧹 [CLEAR_TO_START] Clearing from start of screen to cursor ({cursor_row}, {cursor_col})");
                         }
                         self.clear_from_start_to_cursor();
                     }
@@ -848,8 +847,10 @@ impl Perform for ScreenBuffer {
                                     } else {
                                         "N/A".to_string()
                                     };
-                                eprintln!("🧹 [CLEAR_LINE] Mode=2 clearing entire line {} (grid size: {}x{}) old_content: '{}'", 
-                                         self.cursor_row, self.grid.len(), self.cols, old_content);
+                                let cursor_row = self.cursor_row;
+                                let grid_height = self.grid.len();
+                                let cols = self.cols;
+                                eprintln!("🧹 [CLEAR_LINE] Mode=2 clearing entire line {cursor_row} (grid size: {grid_height}x{cols}) old_content: '{old_content}'");
                             }
                             if let Some(row) = self.grid.get_mut(self.cursor_row) {
                                 for cell in row.iter_mut() {
@@ -862,8 +863,9 @@ impl Perform for ScreenBuffer {
                                     );
                                 }
                             } else {
-                                eprintln!("❌ [CLEAR_LINE_ERROR] Cursor row {} is out of bounds (grid height: {})", 
-                                         self.cursor_row, self.grid.len());
+                                let cursor_row = self.cursor_row;
+                                let grid_height = self.grid.len();
+                                eprintln!("❌ [CLEAR_LINE_ERROR] Cursor row {cursor_row} is out of bounds (grid height: {grid_height})");
                             }
                         }
                         _ => {}
@@ -1013,7 +1015,7 @@ impl Perform for ScreenBuffer {
                             }
                             _ => {
                                 if self.verbose {
-                                    eprintln!("❓ [MODE_SET] Unhandled mode: {}", value);
+                                    eprintln!("❓ [MODE_SET] Unhandled mode: {value}");
                                 }
                             }
                         }
@@ -1068,7 +1070,7 @@ impl Perform for ScreenBuffer {
                             }
                             _ => {
                                 if self.verbose {
-                                    eprintln!("❓ [MODE_RESET] Unhandled mode: {}", value);
+                                    eprintln!("❓ [MODE_RESET] Unhandled mode: {value}");
                                 }
                             }
                         }
