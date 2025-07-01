@@ -19,6 +19,7 @@ cargo run -- --verbose             # Verbose output for debugging
 
 # Debug state detection (human testing)
 climonitor-launcher --verbose claude # Shows detailed state detection process
+climonitor-launcher --verbose gemini # Shows Gemini-specific detection patterns
 climonitor-launcher --verbose claude --help  # Test with simple commands
 
 # Install locally
@@ -31,6 +32,7 @@ cargo install --path .
 # Log file functionality
 climonitor --live --log-file /path/to/output.log
 climonitor-launcher --log-file /path/to/output.log claude
+climonitor-launcher --log-file /path/to/output.log gemini
 ```
 
 ## Architecture Overview
@@ -47,11 +49,11 @@ This is a Rust CLI Tool Monitor that provides real-time monitoring of interactiv
 - **`protocol.rs`**: Communication protocol definitions for client-server messaging
 - **`launcher_client.rs`**: CLI tool wrapper client with PTY integration and state reporting
 
-#### VTE Parser-based Screen Buffer Detection (Current Implementation)
+#### Independent State Detection Architecture (Current Implementation)
 - **`screen_buffer.rs`**: VTE parser-based terminal screen buffer simulation with PTY+1 column buffer
-- **`screen_state_detector.rs`**: Screen buffer-based state detection using UI box parsing
-- **`screen_claude_detector.rs`**: Claude-specific screen state detector implementation
-- **`state_detector.rs`**: State detection abstraction layer and factory patterns
+- **`screen_claude_detector.rs`**: Claude-specific independent state detector with complete ScreenBuffer integration
+- **`screen_gemini_detector.rs`**: Gemini-specific independent state detector with specialized patterns
+- **`state_detector.rs`**: State detection trait definition and factory pattern for tool-specific detectors
 - **`tool_wrapper.rs`**: Multi-tool CLI wrapper supporting Claude Code and Gemini CLI
 - **`unicode_utils.rs`**: Unicode-safe text handling utilities for Japanese text and emoji display
 
@@ -83,20 +85,28 @@ Advanced state detection using complete terminal screen simulation:
 - **Multi-tool Support**: Claude (🤖) and Gemini (✨) CLI tool differentiation
 - **Real-time Updates**: Immediate state changes via screen buffer analysis
 
-**State Detection Logic:**
+**Claude State Detection Logic:**
 - **Waiting for Input (⏳)**: "Do you want", "May I", "proceed?", "y/n" patterns in UI boxes
-- **Busy/Executing (🔵)**: "esc to interrupt", "Tool:", "Auto-updating", "Musing" patterns
+- **Busy/Executing (🔵)**: "esc to interrupt" pattern detection with high precision
+- **Idle (🔵)**: "◯ IDE connected" or completion after "esc to interrupt" disappears
 - **Error (🔴)**: "✗", "failed", "Error" patterns in status lines
-- **Idle (🔵)**: "◯ IDE connected" or UI box present without active operations
 - **Connected (🔗)**: Active PTY session with tool process running
 
-**Key Improvements:**
+**Gemini State Detection Logic:**
+- **Waiting for Input (⏳)**: "Allow execution?", "waiting for user confirmation" patterns
+- **Busy/Executing (🔵)**: "(esc to cancel" patterns in spinner output
+- **Idle (🔵)**: ">" command prompt or "Cumulative Stats" display
+- **Error (🔴)**: Standard error patterns
+- **Connected (🔗)**: Active PTY session with tool process running
+
+**Key Improvements (Complete Independence Architecture):**
+- **Independent Detectors**: Each tool has specialized detection logic optimized for its specific patterns
 - **100% Accuracy**: Complete screen state analysis vs. stream-based pattern matching
-- **Tool Differentiation**: Visual distinction between Claude Code and Gemini CLI sessions
-- **Context Extraction**: UI execution context display (実行中/思考中/更新中/ツール/etc.)
+- **Tool Differentiation**: Claude uses "esc to interrupt", Gemini uses "(esc to cancel" and ">" prompts
+- **Context Extraction**: UI execution context display (実行中/思考中/処理中/etc.)
 - **Session Management**: Proper cleanup and state updates on launcher disconnect
 - **Error States**: API errors, connection failures, tool failures
-- **User Interaction**: Input prompts, y/n confirmations, approval requests
+- **User Interaction**: Tool-specific input prompts and confirmation patterns
 
 **VTE Parser Features:**
 - **Complete ANSI Support**: Full CSI, OSC, and control sequence processing
@@ -386,3 +396,12 @@ When developing:
 - Verify UI box detection with Claude Code and Gemini CLI interfaces
 - Test multi-tool support and tool type differentiation
 - Verify real-time state detection accuracy with actual CLI tool sessions
+
+## Documentation
+
+For detailed technical documentation, see the `docs/` directory:
+
+- **`docs/code-structure.md`**: Complete file dependencies and responsibility mapping
+- **`docs/state-detectors.md`**: Detailed state detection logic and patterns for Claude and Gemini
+
+These documents provide comprehensive coverage of the codebase architecture and implementation details.
