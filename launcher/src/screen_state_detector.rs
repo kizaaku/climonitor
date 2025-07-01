@@ -446,4 +446,9 @@ impl ScreenStateDetector {
             if lines.is_empty() { 0 } else { lines[0].len() },
         )
     }
+
+    /// 現在の画面行を取得（Claude固有状態検出用）
+    pub fn get_screen_lines(&self) -> Vec<String> {
+        self.screen_buffer.get_screen_lines()
+    }
 }
