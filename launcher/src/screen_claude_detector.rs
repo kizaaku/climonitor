@@ -19,7 +19,8 @@ impl ScreenClaudeStateDetector {
     pub fn new(verbose: bool) -> Self {
         // 実際のターミナルサイズを取得
         let pty_size = crate::cli_tool::get_pty_size();
-        let screen_buffer = ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
+        let screen_buffer =
+            ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
 
         if verbose {
             eprintln!(
@@ -50,9 +51,7 @@ impl ScreenClaudeStateDetector {
         if self.verbose {
             eprintln!(
                 "🔍 [CLAUDE_STATE] esc_interrupt: {} → {}, current: {}",
-                self.previous_had_esc_interrupt,
-                has_esc_interrupt,
-                self.current_state
+                self.previous_had_esc_interrupt, has_esc_interrupt, self.current_state
             );
         }
 
@@ -77,7 +76,7 @@ impl ScreenClaudeStateDetector {
 
         // 状態変化なし、基本的なUI box検出を実行
         self.previous_had_esc_interrupt = has_esc_interrupt;
-        
+
         // UI boxからの基本的な状態検出
         let ui_boxes = self.screen_buffer.find_ui_boxes();
         if let Some(latest_box) = ui_boxes.last() {
@@ -92,7 +91,7 @@ impl ScreenClaudeStateDetector {
                     return Some(SessionState::WaitingForInput);
                 }
             }
-            
+
             // IDE接続確認
             for below_line in &latest_box.below_lines {
                 if below_line.contains("◯ IDE connected") {
@@ -100,7 +99,7 @@ impl ScreenClaudeStateDetector {
                 }
             }
         }
-        
+
         None
     }
 }
@@ -116,7 +115,7 @@ impl StateDetector for ScreenClaudeStateDetector {
             self.current_state = new_state.clone();
             return Some(new_state);
         }
-        
+
         None
     }
 

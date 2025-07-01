@@ -18,7 +18,8 @@ impl ScreenGeminiStateDetector {
     pub fn new(verbose: bool) -> Self {
         // 実際のターミナルサイズを取得
         let pty_size = crate::cli_tool::get_pty_size();
-        let screen_buffer = ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
+        let screen_buffer =
+            ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
 
         if verbose {
             eprintln!(
@@ -50,7 +51,7 @@ impl ScreenGeminiStateDetector {
                     // > から始まる行は完了状態（コマンド入力待ち）
                     if trimmed.starts_with('>') {
                         if self.verbose {
-                            eprintln!("✅ [GEMINI_READY] Command prompt ready: {}", trimmed);
+                            eprintln!("✅ [GEMINI_READY] Command prompt ready: {trimmed}");
                         }
                         return Some(SessionState::Idle);
                     }
@@ -58,7 +59,7 @@ impl ScreenGeminiStateDetector {
                     // 入力待ち状態の検出
                     if content_line.contains("Allow execution?") {
                         if self.verbose {
-                            eprintln!("⏳ [GEMINI_INPUT] Waiting for input: {}", trimmed);
+                            eprintln!("⏳ [GEMINI_INPUT] Waiting for input: {trimmed}");
                         }
                         return Some(SessionState::WaitingForInput);
                     }
@@ -100,7 +101,7 @@ impl ScreenGeminiStateDetector {
                 // Gemini処理中パターンの検出
                 if trimmed.contains("(esc to cancel") {
                     if self.verbose {
-                        eprintln!("⚡ [GEMINI_BUSY] Processing detected: {}", trimmed);
+                        eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
                     }
                     return Some(SessionState::Busy);
                 }
@@ -109,7 +110,7 @@ impl ScreenGeminiStateDetector {
                 if trimmed.contains("✗") || trimmed.contains("failed") || trimmed.contains("Error")
                 {
                     if self.verbose {
-                        eprintln!("🔴 [GEMINI_ERROR] Error detected: {}", trimmed);
+                        eprintln!("🔴 [GEMINI_ERROR] Error detected: {trimmed}");
                     }
                     return Some(SessionState::Error);
                 }
@@ -142,14 +143,13 @@ impl StateDetector for ScreenGeminiStateDetector {
             let now = Instant::now();
 
             // 状態変化の記録
-            if &gemini_state != &self.current_state {
+            if gemini_state != self.current_state {
                 self.last_state_change = Some(now);
 
                 if self.verbose {
                     eprintln!(
                         "🎯 [GEMINI_STATE_CHANGE] {:?} → {:?}",
-                        self.current_state,
-                        gemini_state
+                        self.current_state, gemini_state
                     );
                 }
             }
