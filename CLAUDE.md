@@ -5,12 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and Development Commands
 
 ```bash
-# Build the project (creates both ccmonitor and ccmonitor-launcher)
+# Build the project (creates both climonitor and climonitor-launcher)
 cargo build --release
 
-# Real-time monitoring with ccmonitor-launcher
-ccmonitor-launcher claude           # Launch Claude with real-time monitoring
-ccmonitor --live                    # Connect to launcher for live updates
+# Real-time monitoring with climonitor-launcher
+climonitor-launcher claude           # Launch Claude with real-time monitoring
+climonitor --live                    # Connect to launcher for live updates
 
 # Development and testing
 cargo run                           # Build and run in live mode
@@ -18,24 +18,24 @@ cargo run -- --no-tui              # Non-interactive snapshot mode
 cargo run -- --verbose             # Verbose output for debugging
 
 # Debug state detection (human testing)
-ccmonitor-launcher --verbose claude # Shows detailed state detection process
-ccmonitor-launcher --verbose claude --help  # Test with simple commands
+climonitor-launcher --verbose claude # Shows detailed state detection process
+climonitor-launcher --verbose claude --help  # Test with simple commands
 
 # Install locally
 cargo install --path .
 
 # Run binaries directly after build
-./target/release/ccmonitor --live
-./target/release/ccmonitor-launcher claude
+./target/release/climonitor --live
+./target/release/climonitor-launcher claude
 
 # Log file functionality
-ccmonitor --live --log-file /path/to/output.log
-ccmonitor-launcher --log-file /path/to/output.log claude
+climonitor --live --log-file /path/to/output.log
+climonitor-launcher --log-file /path/to/output.log claude
 ```
 
 ## Architecture Overview
 
-This is a Rust CLI tool that provides real-time monitoring of Claude Code sessions using PTY (pseudo-terminal) integration and Unix Domain Socket communication. The application has been completely redesigned with a client-server architecture:
+This is a Rust CLI Tool Monitor that provides real-time monitoring of interactive CLI tools (Claude Code, Gemini CLI, etc.) using PTY (pseudo-terminal) integration and Unix Domain Socket communication. The application has been completely redesigned with a client-server architecture:
 
 ### Core Components
 
@@ -45,7 +45,7 @@ This is a Rust CLI tool that provides real-time monitoring of Claude Code sessio
 - **`session_manager.rs`**: Session state management and tracking across multiple Claude instances
 - **`live_ui.rs`**: Real-time terminal UI for displaying session status and updates
 - **`protocol.rs`**: Communication protocol definitions for client-server messaging
-- **`launcher_client.rs`**: Claude Code wrapper client with PTY integration and state reporting
+- **`launcher_client.rs`**: CLI tool wrapper client with PTY integration and state reporting
 
 #### VTE Parser-based Screen Buffer Detection (Current Implementation)
 - **`screen_buffer.rs`**: VTE parser-based terminal screen buffer simulation with PTY+1 column buffer
@@ -58,9 +58,9 @@ This is a Rust CLI tool that provides real-time monitoring of Claude Code sessio
 ### Data Flow Architecture
 
 #### Client-Server Communication Model
-1. **Monitor Server Startup**: `ccmonitor --live` starts the central monitoring server with Unix Domain Socket
-2. **Launcher Connection**: `ccmonitor-launcher` connects to monitor server and registers as client
-3. **PTY Process Launch**: Launcher creates PTY session and spawns Claude Code with environment variables
+1. **Monitor Server Startup**: `climonitor --live` starts the central monitoring server with Unix Domain Socket
+2. **Launcher Connection**: `climonitor-launcher` connects to monitor server and registers as client
+3. **PTY Process Launch**: Launcher creates PTY session and spawns CLI tool with environment variables
 4. **Bidirectional I/O**: PTY handles all terminal I/O while capturing output for analysis
 5. **Screen Buffer Analysis**: VTE parser processes ANSI sequences to maintain screen state and detect UI changes
 6. **State Broadcasting**: Session state updates are sent to monitor server via protocol messages
@@ -68,7 +68,7 @@ This is a Rust CLI tool that provides real-time monitoring of Claude Code sessio
 
 #### PTY Integration Architecture
 1. **PTY Creation**: `portable-pty` creates pseudo-terminal with proper size detection
-2. **Process Spawning**: Claude Code launched in PTY environment with preserved interactivity
+2. **Process Spawning**: CLI tool launched in PTY environment with preserved interactivity
 3. **I/O Monitoring**: Simultaneous stdout/stderr capture without disrupting user interaction
 4. **Screen Buffer Processing**: VTE parser maintains complete terminal screen state with PTY+1 column buffer for UI box detection
 5. **Signal Handling**: Proper signal forwarding for graceful shutdown and resize events
@@ -123,7 +123,7 @@ The codebase includes comprehensive Unicode support through `unicode_utils.rs`:
 ## Key Design Patterns
 
 - **Client-Server Architecture**: Central monitor server with multiple launcher clients
-- **PTY Integration**: True terminal emulation for seamless Claude Code interaction
+- **PTY Integration**: True terminal emulation for seamless CLI tool interaction
 - **VTE Parser-based Detection**: Complete screen buffer analysis for accurate state detection
 - **Error Resilience**: Continues operation even if launcher clients disconnect
 - **Memory Efficiency**: Bounded channels and automatic cleanup of stale sessions
@@ -132,7 +132,7 @@ The codebase includes comprehensive Unicode support through `unicode_utils.rs`:
 ## UI Box Duplication Problem Resolution
 
 ### Problem Description
-The VTE parser experienced UI box duplication issues where ink.js library (Claude Code CLI framework) UI boxes appeared multiple times on screen, creating visual artifacts that interfered with state detection.
+The VTE parser experienced UI box duplication issues where ink.js library (used by CLI tools like Claude Code) UI boxes appeared multiple times on screen, creating visual artifacts that interfered with state detection.
 
 ### Root Cause Analysis
 The issue was caused by a mismatch between ink.js expectations and VTE parser buffer dimensions:
@@ -188,7 +188,7 @@ if self.verbose {
 ### Resolution Impact
 - **Eliminated UI Box Duplication**: Multiple UI boxes no longer appear on screen
 - **Improved State Detection Accuracy**: Clean UI boxes enable precise status monitoring
-- **Enhanced Claude Code Compatibility**: VTE parser now matches real terminal behavior
+- **Enhanced CLI Tool Compatibility**: VTE parser now matches real terminal behavior
 - **Maintained Performance**: Minimal overhead from single additional column per row
 
 ## Environment Configuration
@@ -200,13 +200,13 @@ The application supports configuration through environment variables and command
 export ANTHROPIC_LOG=debug
 
 # Optional: Custom socket path for client-server communication
-export CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
+export CLIMONITOR_SOCKET_PATH=/tmp/climonitor.sock
 ```
 
 **Environment Variables:**
 - `ANTHROPIC_LOG`: Set to `debug` for detailed Claude output analysis (recommended)
-- `CCMONITOR_SOCKET_PATH`: Custom Unix Domain Socket path (optional)
-- `RUST_LOG`: Standard Rust logging level for ccmonitor itself
+- `CLIMONITOR_SOCKET_PATH`: Custom Unix Domain Socket path (optional)
+- `RUST_LOG`: Standard Rust logging level for climonitor itself
 
 ## Real-time Monitoring Usage
 
@@ -214,35 +214,35 @@ export CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
 
 ```bash
 # Terminal 1: Launch Claude with monitoring
-ccmonitor-launcher claude
+climonitor-launcher claude
 
 # Terminal 2: View real-time status
-ccmonitor --live
+climonitor --live
 ```
 
 ### Advanced Usage
 
 ```bash
 # Verbose monitoring (see debug patterns)
-ccmonitor-launcher --verbose claude
+climonitor-launcher --verbose claude
 
 # Monitor specific Claude operations
-ccmonitor-launcher claude --project myproject
-ccmonitor-launcher claude --help  # Any Claude args work
+climonitor-launcher claude --project myproject
+climonitor-launcher claude --help  # Any Claude args work
 
 # Different viewing modes
-ccmonitor --live --verbose         # Detailed real-time updates
-ccmonitor --no-tui                 # Snapshot mode (one-time status)
+climonitor --live --verbose         # Detailed real-time updates
+climonitor --no-tui                 # Snapshot mode (one-time status)
 ```
 
 ### Architecture Benefits
 
 **Current Implementation Advantages:**
-- **Real-time state detection**: Immediate status updates from Claude Code's PTY output
-- **True interactivity**: PTY preserves full Claude Code functionality
+- **Real-time state detection**: Immediate status updates from CLI tools' PTY output
+- **True interactivity**: PTY preserves full CLI tool functionality
 - **Accurate tool monitoring**: Direct detection of tool permission requests vs execution
-- **Session lifecycle tracking**: Complete visibility into Claude Code's internal state transitions
-- **Multi-session support**: Monitor multiple Claude instances simultaneously
+- **Session lifecycle tracking**: Complete visibility into CLI tools' internal state transitions
+- **Multi-session support**: Monitor multiple CLI tool instances simultaneously
 
 **Use Cases:**
 - Development workflow monitoring
@@ -254,17 +254,17 @@ ccmonitor --no-tui                 # Snapshot mode (one-time status)
 ## Log File Functionality
 
 ### Overview
-ccmonitor supports comprehensive logging of Claude's standard output to files using the `--log-file` option. This feature works for both interactive and non-interactive modes while preserving Claude's full functionality.
+climonitor supports comprehensive logging of CLI tools' standard output to files using the `--log-file` option. This feature works for both interactive and non-interactive modes while preserving CLI tools' full functionality.
 
 ### Usage
 
 ```bash
 # Start monitor with log file option
-ccmonitor --live --log-file /path/to/logfile.log
+climonitor --live --log-file /path/to/logfile.log
 
-# Launch Claude sessions (logs automatically recorded)
-ccmonitor-launcher --log-file /path/to/output.log claude
-ccmonitor-launcher --log-file /path/to/output.log claude --print "query"
+# Launch CLI tool sessions (logs automatically recorded)
+climonitor-launcher --log-file /path/to/output.log claude
+climonitor-launcher --log-file /path/to/output.log claude --print "query"
 ```
 
 ### Implementation Details
@@ -283,7 +283,7 @@ ccmonitor-launcher --log-file /path/to/output.log claude --print "query"
 
 ### Key Benefits
 
-- **Preserves Interactivity**: PTY maintains full Claude Code functionality
+- **Preserves Interactivity**: PTY maintains full CLI tool functionality
 - **Complete Output Capture**: All terminal output including ANSI sequences logged
 - **Real-time Writing**: Immediate output capture with proper flushing
 - **Seamless Integration**: Transparent logging without workflow changes
@@ -357,7 +357,7 @@ For easy human testing of state detection:
 
 ```bash
 # Terminal 1: Start verbose monitoring to see detection process
-ccmonitor-launcher --verbose claude
+climonitor-launcher --verbose claude
 
 # Watch the debug output showing:
 # 📺 [SCREEN] - Current screen buffer state
@@ -367,7 +367,7 @@ ccmonitor-launcher --verbose claude
 # 📊 [CONTEXT] - Execution context extraction
 
 # Terminal 2: Monitor the session status
-ccmonitor --live
+climonitor --live
 ```
 
 ### Development Testing
@@ -385,4 +385,4 @@ When developing:
 - Test VTE parser integration and screen buffer accuracy
 - Verify UI box detection with Claude Code and Gemini CLI interfaces
 - Test multi-tool support and tool type differentiation
-- Verify real-time state detection accuracy with actual Claude sessions
+- Verify real-time state detection accuracy with actual CLI tool sessions

@@ -1,18 +1,18 @@
 use clap::Parser;
 
-use ccmonitor_monitor::live_ui::{print_snapshot, LiveUI};
-use ccmonitor_monitor::monitor_server::MonitorServer;
-use ccmonitor_monitor::session_manager::SessionManager;
+use climonitor_monitor::live_ui::{print_snapshot, LiveUI};
+use climonitor_monitor::monitor_server::MonitorServer;
+use climonitor_monitor::session_manager::SessionManager;
 
 #[derive(Parser)]
-#[command(name = "ccmonitor")]
+#[command(name = "climonitor")]
 #[command(about = "Monitor Claude session status in real-time")]
 struct Cli {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
 
-    /// Live mode - connect to ccmonitor-launcher for real-time updates
+    /// Live mode - connect to climonitor-launcher for real-time updates
     #[arg(long)]
     live: bool,
 
@@ -117,10 +117,10 @@ async fn run_snapshot_mode(verbose: bool) -> anyhow::Result<()> {
             println!("{}", "═".repeat(50));
             println!("⚠️  Monitor server not running");
             println!("💡 Start the monitor server with:");
-            println!("   ccmonitor --live");
+            println!("   climonitor --live");
             println!();
             println!("💡 Then start launchers with:");
-            println!("   ccmonitor-launcher claude");
+            println!("   climonitor-launcher claude");
         }
     }
 

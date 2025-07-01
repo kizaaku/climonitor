@@ -8,11 +8,11 @@ resolver = "2"
 
 [workspace.package]
 version = "0.2.0"
-authors = ["ccmonitor contributors"]
+authors = ["climonitor contributors"]
 license = "MIT"
-repository = "https://github.com/kizaaku/ccmonitor"
-homepage = "https://github.com/kizaaku/ccmonitor"
-description = "Real-time monitoring and state detection for Claude Code sessions"
+repository = "https://github.com/kizaaku/climonitor"
+homepage = "https://github.com/kizaaku/climonitor"
+description = "Real-time monitoring and state detection for CLI tool sessions"
 keywords = ["claude", "monitoring", "cli", "terminal", "pty"]
 categories = ["command-line-utilities", "development-tools"]
 edition = "2021"

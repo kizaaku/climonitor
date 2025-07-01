@@ -11,7 +11,7 @@ use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
 
 use crate::tool_wrapper::ToolWrapper;
-use ccmonitor_shared::{generate_connection_id, LauncherToMonitor, SessionStatus};
+use climonitor_shared::{generate_connection_id, LauncherToMonitor, SessionStatus};
 
 /// ターミナル状態の自動復元ガード
 #[cfg(unix)]
@@ -115,10 +115,10 @@ impl LauncherClient {
     /// Monitor サーバーへの接続を試行
     async fn try_connect_to_monitor(&mut self, socket_path: Option<PathBuf>) -> Result<()> {
         let socket_path = socket_path.unwrap_or_else(|| {
-            std::env::var("CCMONITOR_SOCKET_PATH")
+            std::env::var("CLIMONITOR_SOCKET_PATH")
                 .unwrap_or_else(|_| {
                     std::env::temp_dir()
-                        .join("ccmonitor.sock")
+                        .join("climonitor.sock")
                         .to_string_lossy()
                         .to_string()
                 })
@@ -541,7 +541,7 @@ impl LauncherClient {
         tool_type: crate::cli_tool::CliToolType,
     ) {
         use crate::state_detector::create_state_detector;
-        use ccmonitor_shared::SessionStatus;
+        use climonitor_shared::SessionStatus;
 
         let mut state_detector = create_state_detector(tool_type, verbose);
         let mut last_status = SessionStatus::Idle;
@@ -609,9 +609,7 @@ impl LauncherClient {
                         let new_status = state_detector.to_session_status();
                         if new_status != last_status {
                             if verbose {
-                                eprintln!(
-                                    "🔄 Status changed: {last_status:?} -> {new_status:?}"
-                                );
+                                eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?}");
                             }
                             last_status = new_status.clone();
 
@@ -707,9 +705,9 @@ impl LauncherClient {
         verbose: bool,
     ) {
         // 新しい接続でステータス更新を送信（ベストエフォート）
-        let socket_path = std::env::var("CCMONITOR_SOCKET_PATH").unwrap_or_else(|_| {
+        let socket_path = std::env::var("CLIMONITOR_SOCKET_PATH").unwrap_or_else(|_| {
             std::env::temp_dir()
-                .join("ccmonitor.sock")
+                .join("climonitor.sock")
                 .to_string_lossy()
                 .to_string()
         });

@@ -4,7 +4,7 @@ use crate::cli_tool::CliToolType;
 use crate::screen_buffer::{ScreenBuffer, UIBox};
 use crate::session_state::SessionState;
 use crate::state_detector::StateDetector;
-use ccmonitor_shared::SessionStatus;
+use climonitor_shared::SessionStatus;
 use std::io::Write;
 use std::time::{Duration, Instant};
 

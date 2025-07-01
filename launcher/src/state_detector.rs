@@ -1,7 +1,7 @@
 // state_detector.rs - 状態検出の抽象化レイヤー
 
 use crate::session_state::SessionState;
-use ccmonitor_shared::SessionStatus;
+use climonitor_shared::SessionStatus;
 
 /// 状態検出器の共通インターフェース
 pub trait StateDetector: Send + Sync {

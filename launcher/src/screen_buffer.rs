@@ -515,9 +515,7 @@ impl ScreenBuffer {
         let actual_insert = n.min(self.scroll_bottom - insert_row + 1);
 
         if self.verbose && actual_insert > 0 {
-            eprintln!(
-                "📝 [INSERT_LINES] Inserting {actual_insert} lines at row {insert_row}"
-            );
+            eprintln!("📝 [INSERT_LINES] Inserting {actual_insert} lines at row {insert_row}");
         }
 
         // 挿入位置から下の行を下にシフト（グリッドサイズ固定）
@@ -545,9 +543,7 @@ impl ScreenBuffer {
         let actual_delete = n.min(self.scroll_bottom - delete_row + 1);
 
         if self.verbose && actual_delete > 0 {
-            eprintln!(
-                "🗑️  [DELETE_LINES] Deleting {actual_delete} lines at row {delete_row}"
-            );
+            eprintln!("🗑️  [DELETE_LINES] Deleting {actual_delete} lines at row {delete_row}");
         }
 
         // 削除位置から下の行を上にシフト（グリッドサイズ固定）

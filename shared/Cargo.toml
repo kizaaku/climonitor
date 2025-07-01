@@ -1,8 +1,8 @@
 [package]
-name = "ccmonitor-shared"
+name = "climonitor-shared"
 version.workspace = true
 edition.workspace = true
-description = "Shared protocol and utilities for ccmonitor"
+description = "Shared protocol and utilities for climonitor"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

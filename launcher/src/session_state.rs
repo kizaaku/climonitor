@@ -1,4 +1,4 @@
-use ccmonitor_shared::SessionStatus;
+use climonitor_shared::SessionStatus;
 
 /// Claude セッションの状態
 #[derive(Debug, Clone, PartialEq)]

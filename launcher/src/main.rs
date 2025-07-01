@@ -2,13 +2,13 @@ use anyhow::Result;
 use clap::{Arg, Command};
 
 // lib crate から import
-use ccmonitor_launcher::cli_tool::{CliToolFactory, CliToolType};
-use ccmonitor_launcher::launcher_client::LauncherClient;
-use ccmonitor_launcher::tool_wrapper::ToolWrapper;
+use climonitor_launcher::cli_tool::{CliToolFactory, CliToolType};
+use climonitor_launcher::launcher_client::LauncherClient;
+use climonitor_launcher::tool_wrapper::ToolWrapper;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let matches = Command::new("ccmonitor-launcher")
+    let matches = Command::new("climonitor-launcher")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Launch Claude Code or Gemini CLI with real-time session monitoring")
         .arg(
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     };
 
     if verbose {
-        println!("🔧 ccmonitor-launcher starting...");
+        println!("🔧 climonitor-launcher starting...");
         println!("🛠️  Tool: {tool_type:?}");
         println!("📝 Args: {tool_args:?}");
     }
@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
     // monitor接続時のみターミナルガード作成
     #[cfg(unix)]
     let _terminal_guard = if launcher.is_connected() {
-        use ccmonitor_launcher::launcher_client::create_terminal_guard_global;
+        use climonitor_launcher::launcher_client::create_terminal_guard_global;
         Some(create_terminal_guard_global(verbose)?)
     } else {
         None
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
                             if let Some(guard) = _terminal_guard {
                                 drop(guard); // ターミナル設定を明示的に復元
                             }
-                            ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
+                            climonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
                         }
                         std::process::exit(1);
                     }
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
                     if let Some(guard) = _terminal_guard {
                         drop(guard); // ターミナル設定を明示的に復元
                     }
-                    ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
+                    climonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
                 }
                 std::process::exit(130); // 128 + 2 (SIGINT)
             }
@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
                     if let Some(guard) = _terminal_guard {
                         drop(guard); // ターミナル設定を明示的に復元
                     }
-                    ccmonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
+                    climonitor_launcher::launcher_client::force_restore_terminal(); // 強制復元
                 }
                 std::process::exit(143); // 128 + 15 (SIGTERM)
             }
@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
     }
 
     if verbose {
-        println!("👋 ccmonitor-launcher finished");
+        println!("👋 climonitor-launcher finished");
     }
 
     Ok(())

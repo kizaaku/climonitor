@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::session_manager::SessionManager;
-use ccmonitor_shared::LauncherToMonitor;
+use climonitor_shared::LauncherToMonitor;
 
 /// 接続情報
 #[derive(Debug)]
@@ -93,7 +93,7 @@ impl MonitorServer {
                 } => {
                     match accept_result {
                         Ok((stream, _)) => {
-                            let connection_id = ccmonitor_shared::generate_connection_id();
+                            let connection_id = climonitor_shared::generate_connection_id();
                             if self.verbose {
                                 println!("🔗 New connection: {connection_id}");
                             }
@@ -186,9 +186,7 @@ impl MonitorServer {
                 Some(connection) => connection.stream,
                 None => {
                     if verbose {
-                        eprintln!(
-                            "⚠️  Connection {connection_id} not found in connections map"
-                        );
+                        eprintln!("⚠️  Connection {connection_id} not found in connections map");
                     }
                     return Err(anyhow::anyhow!("Connection not found: {}", connection_id));
                 }
@@ -373,7 +371,7 @@ impl MonitorServer {
     /// ソケットパス取得
     fn get_socket_path() -> Result<PathBuf> {
         let temp_dir = std::env::temp_dir();
-        Ok(temp_dir.join("ccmonitor.sock"))
+        Ok(temp_dir.join("climonitor.sock"))
     }
 
     /// 外部クライアント用のソケットパス取得
@@ -404,6 +402,6 @@ mod tests {
     #[test]
     fn test_socket_path() {
         let path = MonitorServer::get_client_socket_path().unwrap();
-        assert!(path.to_string_lossy().contains("ccmonitor.sock"));
+        assert!(path.to_string_lossy().contains("climonitor.sock"));
     }
 }

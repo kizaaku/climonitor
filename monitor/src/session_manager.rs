@@ -1,7 +1,7 @@
-use ccmonitor_shared::{
+use chrono::Utc;
+use climonitor_shared::{
     LauncherInfo, LauncherStatus, LauncherToMonitor, ProcessMetrics, SessionInfo, SessionStatus,
 };
-use chrono::Utc;
 use std::collections::HashMap;
 
 /// セッション管理システム
@@ -265,7 +265,7 @@ pub struct SessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ccmonitor_shared::generate_connection_id;
+    use climonitor_shared::generate_connection_id;
 
     #[test]
     fn test_launcher_lifecycle() {

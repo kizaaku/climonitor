@@ -128,7 +128,7 @@ impl LiveUI {
 
         if filtered_sessions.is_empty() {
             println!("⏳ No launcher connections");
-            println!("💡 Start with: ccmonitor-launcher claude");
+            println!("💡 Start with: climonitor-launcher claude");
             println!();
             return;
         }
@@ -167,7 +167,10 @@ impl LiveUI {
                 let ui_above_display = if let Some(ref ui_text) = session.ui_above_text {
                     let terminal_width = get_terminal_width();
                     let available_width = terminal_width.saturating_sub(20); // 余白を考慮
-                    format!(" {ui_text}", ui_text = truncate_str(ui_text, available_width))
+                    format!(
+                        " {ui_text}",
+                        ui_text = truncate_str(ui_text, available_width)
+                    )
                 } else {
                     String::new()
                 };
@@ -253,7 +256,7 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
 
     if filtered_sessions.is_empty() {
         println!("🔍 No active sessions found");
-        println!("💡 Start with: ccmonitor-launcher claude");
+        println!("💡 Start with: climonitor-launcher claude");
         return;
     }
 
