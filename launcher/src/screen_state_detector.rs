@@ -312,14 +312,7 @@ impl ScreenStateDetector {
         // 2. 上の行（実行コンテキスト）での実行状態検出
         for above_line in &ui_box.above_lines {
             let is_busy = match self.tool_type {
-                CliToolType::Claude => {
-                    above_line.contains("esc to interrupt")
-                        || above_line.contains("Musing")
-                        || above_line.contains("Auto-updating")
-                        || above_line.contains("Tool:")
-                        || above_line.contains("Wizarding")
-                        || above_line.contains("Baking")
-                }
+                CliToolType::Claude => above_line.contains("esc to interrupt"),
                 CliToolType::Gemini => {
                     above_line.contains("Processing")
                         || above_line.contains("Generating")
@@ -451,9 +444,28 @@ impl StateDetector for ScreenStateDetector {
     fn get_ui_above_text(&self) -> Option<String> {
         self.ui_above_text.clone()
     }
+
+    fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
+        if self.verbose {
+            debug_println_raw(&format!(
+                "🔄 [SCREEN_RESIZE] Resizing screen buffer to {}x{} (rows x cols)",
+                rows, cols
+            ));
+        }
+        self.screen_buffer = ScreenBuffer::new(rows, cols, self.verbose);
+    }
 }
 
 impl ScreenStateDetector {
+    /// 現在のscreen bufferサイズを取得
+    pub fn get_screen_buffer_size(&self) -> (usize, usize) {
+        let lines = self.screen_buffer.get_screen_lines();
+        (
+            lines.len(),
+            if lines.is_empty() { 0 } else { lines[0].len() },
+        )
+    }
+
     /// 現在の画面行を取得（Claude固有状態検出用）
     pub fn get_screen_lines(&self) -> Vec<String> {
         self.screen_buffer.get_screen_lines()

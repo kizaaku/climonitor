@@ -99,4 +99,8 @@ impl StateDetector for ScreenClaudeStateDetector {
     fn get_ui_above_text(&self) -> Option<String> {
         self.screen_detector.get_ui_above_text()
     }
+
+    fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
+        self.screen_detector.resize_screen_buffer(rows, cols)
+    }
 }

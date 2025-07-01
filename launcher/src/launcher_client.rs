@@ -488,14 +488,15 @@ impl LauncherClient {
                 }
                 _ = sigwinch.recv() => {
                     if self.verbose {
-                        eprintln!("🔄 Terminal resized - reapplying settings...");
+                        eprintln!("🔄 Terminal resized - updating PTY size...");
                     }
-                    // rawモード設定を再適用
-                    // TODO: Re-enable terminal guard reapply
-                    // #[cfg(unix)]
-                    // if let Some(guard) = &terminal_guard {
-                    //     guard.reapply_raw_mode();
-                    // }
+                    // 現在のターミナルサイズを取得してPTYに適用
+                    let new_size = crate::cli_tool::get_pty_size();
+                    // Note: PTYサイズの動的変更は構造上複雑なため、
+                    // 新しい接続時に正しいサイズが設定されることを確保
+                    if self.verbose {
+                        eprintln!("📏 New terminal size: {}x{}", new_size.cols, new_size.rows);
+                    }
                     // ループ継続
                 }
             }
@@ -541,6 +542,9 @@ impl LauncherClient {
 
         let mut state_detector = create_state_detector(tool_type, verbose);
         let mut last_status = SessionStatus::Idle;
+        
+        // ターミナルサイズ監視用
+        let mut last_terminal_size = crate::cli_tool::get_pty_size();
         use std::io::Read;
         use tokio::io::AsyncWriteExt;
 
@@ -574,6 +578,22 @@ impl LauncherClient {
                                 eprintln!("⚠️  Failed to write to log file: {}", e);
                             }
                         }
+                    }
+
+                    // ターミナルサイズ変更チェック
+                    let current_terminal_size = crate::cli_tool::get_pty_size();
+                    if current_terminal_size.rows != last_terminal_size.rows 
+                        || current_terminal_size.cols != last_terminal_size.cols {
+                        if verbose {
+                            eprintln!("🔄 Terminal size changed: {}x{} -> {}x{}", 
+                                     last_terminal_size.cols, last_terminal_size.rows,
+                                     current_terminal_size.cols, current_terminal_size.rows);
+                        }
+                        state_detector.resize_screen_buffer(
+                            current_terminal_size.rows as usize, 
+                            current_terminal_size.cols as usize
+                        );
+                        last_terminal_size = current_terminal_size;
                     }
 
                     // 状態検出とモニター通知

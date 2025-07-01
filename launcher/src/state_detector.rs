@@ -22,6 +22,9 @@ pub trait StateDetector: Send + Sync {
 
     /// UI box上の⏺文字以降のテキストを取得
     fn get_ui_above_text(&self) -> Option<String>;
+
+    /// ターミナルサイズ変更時のscreen buffer再初期化
+    fn resize_screen_buffer(&mut self, rows: usize, cols: usize);
 }
 
 /// 状態検出器のファクトリー
