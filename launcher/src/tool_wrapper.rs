@@ -1,8 +1,8 @@
+use crate::cli_tool::{get_pty_size, setup_common_pty_environment, CliTool};
 use anyhow::Result;
 use portable_pty::{native_pty_system, CommandBuilder};
 use std::process::Stdio;
 use tokio::process::{Child, Command};
-use crate::cli_tool::{CliTool, get_pty_size, setup_common_pty_environment};
 
 /// CLI ツール実行ラッパー（汎用）
 pub struct ToolWrapper {
@@ -36,7 +36,6 @@ impl ToolWrapper {
     pub fn get_working_dir(&self) -> Option<&std::path::PathBuf> {
         self.working_dir.as_ref()
     }
-
 
     /// CLI ツール プロセスを起動（従来のパイプベース）
     pub async fn spawn(&self) -> Result<Child> {
@@ -72,18 +71,14 @@ impl ToolWrapper {
         cmd.args(&self.args);
 
         // 作業ディレクトリを設定（指定がない場合は現在のディレクトリ）
-        let working_dir = self
-            .working_dir
-            .as_ref()
-            .map(|p| p.clone())
-            .unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-            });
+        let working_dir = self.working_dir.clone().unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        });
         cmd.cwd(working_dir);
 
         // 共通環境変数を設定
         setup_common_pty_environment(&mut cmd);
-        
+
         // ツール固有の環境変数を設定
         self.tool.setup_environment(&mut cmd);
 
@@ -109,7 +104,11 @@ impl ToolWrapper {
         let status = cmd.status().await?;
 
         if !status.success() {
-            return Err(anyhow::anyhow!("{} exited with status: {}", self.tool.command_name(), status));
+            return Err(anyhow::anyhow!(
+                "{} exited with status: {}",
+                self.tool.command_name(),
+                status
+            ));
         }
 
         Ok(())
@@ -117,10 +116,11 @@ impl ToolWrapper {
 
     /// プロジェクト名を推測
     pub fn guess_project_name(&self) -> Option<String> {
-        let working_dir = self.working_dir.as_ref()
-            .map(|p| p.as_path())
+        let working_dir = self
+            .working_dir
+            .as_deref()
             .unwrap_or_else(|| std::path::Path::new("."));
-        
+
         self.tool.guess_project_name(&self.args, working_dir)
     }
 
@@ -128,12 +128,12 @@ impl ToolWrapper {
     pub fn to_command_string(&self) -> String {
         self.tool.to_command_string(&self.args)
     }
-    
+
     /// ツールの参照を取得
     pub fn get_tool(&self) -> &dyn CliTool {
         self.tool.as_ref()
     }
-    
+
     /// ツールタイプを取得
     pub fn get_tool_type(&self) -> crate::cli_tool::CliToolType {
         match self.tool.command_name() {

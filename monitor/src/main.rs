@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use ccmonitor_monitor::live_ui::{LiveUI, print_snapshot};
+use ccmonitor_monitor::live_ui::{print_snapshot, LiveUI};
 use ccmonitor_monitor::monitor_server::MonitorServer;
 use ccmonitor_monitor::session_manager::SessionManager;
 
@@ -11,15 +11,15 @@ struct Cli {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
-    
+
     /// Live mode - connect to ccmonitor-launcher for real-time updates
     #[arg(long)]
     live: bool,
-    
+
     /// Non-interactive mode (print status and exit)
     #[arg(long)]
     no_tui: bool,
-    
+
     /// Log file path to save Claude's standard output
     #[arg(long)]
     log_file: Option<std::path::PathBuf>,
@@ -28,7 +28,7 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    
+
     if cli.live {
         // ライブモード：Monitor サーバーとして動作
         run_live_mode(cli.verbose, cli.log_file).await?;
@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
         println!("💡 Starting in live mode. Use --no-tui for snapshot mode.");
         run_live_mode(cli.verbose, cli.log_file).await?;
     }
-    
+
     Ok(())
 }
 
@@ -63,7 +63,7 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
 
     // LiveUI開始
     let mut live_ui = LiveUI::new(session_manager, update_receiver, verbose);
-    
+
     // サーバーとUIを並行実行
     tokio::select! {
         result = server.run() => {
@@ -79,7 +79,7 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
                 }
             }
         }
-        
+
         result = live_ui.run() => {
             match result {
                 Ok(_) => {
@@ -127,19 +127,18 @@ async fn run_snapshot_mode(verbose: bool) -> anyhow::Result<()> {
 }
 
 /// Monitor サーバーへの接続試行
-async fn try_connect_to_monitor() -> anyhow::Result<std::sync::Arc<tokio::sync::RwLock<SessionManager>>> {
+async fn try_connect_to_monitor(
+) -> anyhow::Result<std::sync::Arc<tokio::sync::RwLock<SessionManager>>> {
     use tokio::net::UnixStream;
     use tokio::time::{timeout, Duration};
 
     let socket_path = MonitorServer::get_client_socket_path()?;
-    
+
     // 接続タイムアウト: 2秒
     let _stream = timeout(Duration::from_secs(2), UnixStream::connect(socket_path)).await??;
-    
+
     // TODO: 実際のセッション情報取得
     // 現在は空のSessionManagerを返す（デモ用）
     let session_manager = std::sync::Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
     Ok(session_manager)
 }
-
-

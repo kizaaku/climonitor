@@ -1,27 +1,27 @@
 // cli_tool.rs - CLI ツール共通インターフェース
 
 use anyhow::Result;
-use std::path::Path;
 use portable_pty::{CommandBuilder, PtySize};
-use terminal_size::{terminal_size, Width, Height};
+use std::path::Path;
+use terminal_size::{terminal_size, Height, Width};
 
 /// CLI ツールの共通インターフェース
 pub trait CliTool: Send + Sync {
     /// ツールのコマンド名を取得
     fn command_name(&self) -> &str;
-    
+
     /// ツール固有の環境変数を設定
     fn setup_environment(&self, cmd: &mut CommandBuilder);
-    
+
     /// プロジェクト名を推測
     fn guess_project_name(&self, args: &[String], working_dir: &Path) -> Option<String>;
-    
+
     /// ツール固有の引数検証
     fn validate_args(&self, _args: &[String]) -> Result<()> {
         // デフォルト実装：引数をそのまま受け入れる
         Ok(())
     }
-    
+
     /// ツール固有のコマンド文字列生成
     fn to_command_string(&self, args: &[String]) -> String {
         let mut parts = vec![self.command_name().to_string()];
@@ -46,7 +46,7 @@ impl CliToolType {
             _ => None,
         }
     }
-    
+
     /// CliToolTypeから文字列を取得
     pub fn to_command(&self) -> &'static str {
         match self {
@@ -74,13 +74,13 @@ pub fn get_pty_size() -> PtySize {
     // ターミナルサイズを取得、失敗時は80x24をデフォルトとする
     match terminal_size() {
         Some((Width(cols), Height(rows))) => PtySize {
-            rows,
+            rows, // 通常のPTYサイズを使用（ink互換性のため）
             cols,
             pixel_width: 0,
             pixel_height: 0,
         },
         None => PtySize {
-            rows: 24,
+            rows: 24, // 通常のデフォルトサイズ
             cols: 80,
             pixel_width: 0,
             pixel_height: 0,
@@ -101,8 +101,14 @@ mod tests {
 
     #[test]
     fn test_cli_tool_type_from_command() {
-        assert_eq!(CliToolType::from_command("claude"), Some(CliToolType::Claude));
-        assert_eq!(CliToolType::from_command("gemini"), Some(CliToolType::Gemini));
+        assert_eq!(
+            CliToolType::from_command("claude"),
+            Some(CliToolType::Claude)
+        );
+        assert_eq!(
+            CliToolType::from_command("gemini"),
+            Some(CliToolType::Gemini)
+        );
         assert_eq!(CliToolType::from_command("unknown"), None);
     }
 

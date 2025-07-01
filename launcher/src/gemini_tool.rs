@@ -37,7 +37,7 @@ impl CliTool for GeminiTool {
     fn guess_project_name(&self, args: &[String], working_dir: &Path) -> Option<String> {
         // Gemini固有のプロジェクト名推測ロジック
         // 現在はClaude同様の実装を使用
-        
+
         // --project 引数から取得を試行（Geminiが対応している場合）
         if let Some(project_idx) = args.iter().position(|arg| arg == "--project") {
             if let Some(project_name) = args.get(project_idx + 1) {
@@ -93,7 +93,7 @@ mod tests {
         let tool = GeminiTool::new();
         let args = vec!["--project".to_string(), "test-project".to_string()];
         let working_dir = PathBuf::from("/tmp");
-        
+
         let result = tool.guess_project_name(&args, &working_dir);
         assert_eq!(result, Some("test-project".to_string()));
     }
@@ -103,7 +103,7 @@ mod tests {
         let tool = GeminiTool::new();
         let args = vec![];
         let working_dir = PathBuf::from("/home/user/my-project");
-        
+
         let result = tool.guess_project_name(&args, &working_dir);
         assert_eq!(result, Some("my-project".to_string()));
     }
@@ -112,7 +112,7 @@ mod tests {
     fn test_gemini_tool_validate_args() {
         let tool = GeminiTool::new();
         let args = vec!["--help".to_string()];
-        
+
         assert!(tool.validate_args(&args).is_ok());
     }
 }

@@ -1,14 +1,42 @@
-# Claude Session Monitor
+# Claude Code Monitor (ccmonitor)
 
-Claude セッションファイルを監視し、リアルタイムでセッション状態を表示する軽量CLIツール。
+Claude Codeセッションのリアルタイム監視とPTY統合による高精度状態検出ツール
 
-## 🚀 Phase 3: リアルタイム出力監視
+[![CI](https://github.com/username/ccmonitor/workflows/CI/badge.svg)](https://github.com/username/ccmonitor/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**NEW!** Claude Codeの出力ストリームを直接監視して、正確な状態をリアルタイムで検出する革新的なアプローチ。
+## 特徴
 
-### クイックスタート
+- ⚡ **リアルタイム監視**: PTY統合によるClaude Codeの直接監視
+- 🎯 **高精度状態検出**: VTEパーサーベースの端末解析とUIボックス検出
+- 📊 **クライアント・サーバー構成**: 複数セッションの同時監視
+- 🖥️ **ターミナルUI**: セッション状態のリアルタイムダッシュボード
+- 🔧 **マルチツール対応**: Claude CodeとGemini CLIに対応
+- 🌍 **Unicode対応**: 日本語テキストと絵文字の適切な処理
+
+## デモ
+
+```
+┌─ ccmonitor --live ─────────────────────────────────────┐
+🔥 Claude Session Monitor - Live Mode
+📊 Session: 2
+══════════════════════════════════════════════════════════════════════
+  📁 folder1:
+    🔵 ✨ 完了 | 10s ago
+
+  📁 folder2:
+    🔵 🤖 完了 | 1m ago
+
+🔄 Last update: 01:02:05 | Press Ctrl+C to exit
+└────────────────────────────────────────────────────────┘
+```
+
+## クイックスタート
 
 ```bash
+# ビルド
+cargo build --release
+
 # ターミナル1: Claude Codeを監視付きで起動
 ccmonitor-launcher claude
 
@@ -16,50 +44,39 @@ ccmonitor-launcher claude
 ccmonitor --live
 ```
 
-## 特徴
-
-- 🚀 **超高速**: Rust製で起動時間 ~1ms、メモリ使用量 ~2MB
-- ⚡ **Phase 3: 真のリアルタイム監視**: Claude Codeの内部出力を直接解析
-- 🎯 **正確な状態検出**: tool_use許可待ち vs 実行中を明確に判別
-- 📊 **ハイブリッド監視**: リアルタイム + 従来のJSONL監視
-- 📁 **プロジェクト別表示**: 作業ディレクトリごとにグループ化
-- ⌨️ **インタラクティブ**: キーボード操作対応
-- 🖥️ **複数モード**: TUI、ライブ、非対話、ウォッチ、デモ
-
-## セッション状態
-
-### Phase 3: リアルタイム検出
-- 🟢 **作業中**: Claude がAPIリクエスト中、またはツール実行中
-- 🟡 **承認待ち**: ツール実行許可をユーザーに要求中
-- 🔵 **完了**: テキスト応答またはツール実行完了
-- 🔴 **エラー**: 実行エラー、接続エラー、例外発生
-- ⚪ **アイドル**: 5分以上更新がないセッション
-
-### 従来方式との比較
-| 検出方式 | tool_use判別 | 応答速度 | 正確性 |
-|---------|-------------|----------|--------|
-| **Phase 3** | ✅ 許可待ち/実行中を区別 | ⚡ リアルタイム | 🎯 デバッグログベース |
-| 従来JSONL | ❌ 推測のみ | 🐌 ファイル監視遅延 | 📊 パターン推測 |
-
 ## インストール
 
-```bash
-# ビルド（ccmonitor + ccmonitor-launcher）
-cargo build --release
+### Cargoからインストール
 
-# インストール（オプション）
+```bash
+# ローカルインストール
 cargo install --path .
+
+# 実行
+ccmonitor --live
+ccmonitor-launcher claude
 ```
 
-## 使用方法
-
-### 🔥 Phase 3: リアルタイム監視（推奨）
+### バイナリを直接使用
 
 ```bash
-# 基本: Claude Codeを監視付きで起動
+# リリースビルド
+cargo build --release
+
+# 実行ファイルを直接使用
+./target/release/ccmonitor --live
+./target/release/ccmonitor-launcher claude
+```
+
+## 基本的な使い方
+
+### リアルタイム監視（推奨）
+
+```bash
+# 基本的な監視付き起動
 ccmonitor-launcher claude
 
-# 詳細: デバッグパターンも表示
+# 詳細なデバッグ出力付き
 ccmonitor-launcher --verbose claude
 
 # 任意のClaude引数をサポート
@@ -67,106 +84,212 @@ ccmonitor-launcher claude --project myproject
 ccmonitor-launcher claude --help
 ```
 
+### 監視ダッシュボード
+
 ```bash
-# 別ターミナルでリアルタイム状態表示
+# リアルタイムライブ表示
 ccmonitor --live
 
 # 詳細ログ付きライブモード
 ccmonitor --live --verbose
 
-# プロジェクトフィルター
-ccmonitor --live --project myproject
+# 一回限りのスナップショット
+ccmonitor --no-tui
 ```
 
-### 📊 従来モード
+### ログファイル機能
 
 ```bash
-# TUIモード（リアルタイムダッシュボード）
-./target/release/ccmonitor
-
-# 非対話モード（現在の状態を表示して終了）
-./target/release/ccmonitor --no-tui
-
-# ウォッチモード（変更を継続監視）
-./target/release/ccmonitor --watch
-
-# デモモード（1秒タイマーテスト）
-./target/release/ccmonitor --demo
-
-# 詳細出力
-./target/release/ccmonitor --no-tui --verbose
-
-# 特定プロジェクトのみ
-./target/release/ccmonitor --project ccmonitor
+# 出力をファイルに記録
+ccmonitor --live --log-file /path/to/output.log
+ccmonitor-launcher --log-file /path/to/session.log claude
 ```
 
-## キーボード操作（TUIモード）
+## セッション状態
 
-- `q` / `Esc`: 終了
-- `r`: 手動更新
+| 状態 | アイコン | 説明 |
+|------|----------|------|
+| **接続中** | 🔗 | PTYセッションが実行中 |
+| **アイドル** | 🔵 | UIボックスが表示されているが操作なし |
+| **実行中** | 🔵 | "ツール"、"自動更新"、"思考中"パターン検出 |
+| **入力待ち** | ⏳ | "続行しますか？"、"y/n"などの確認待ち |
+| **エラー** | 🔴 | "✗"、"failed"、"Error"パターン検出 |
 
 ## アーキテクチャ
 
-### Phase 3: 出力ストリーム監視
-1. **プロセスラッパー**: `ccmonitor-launcher`がClaude Codeを子プロセスとして起動
-2. **出力キャプチャ**: `ANTHROPIC_LOG=debug`でstdout/stderrを監視
-3. **パターン解析**: 正規表現でAPI呼び出し、ツール実行、エラーを検出
-4. **状態配信**: Unix Domain Socketでリアルタイム状態をブロードキャスト
-5. **ライブ表示**: `ccmonitor --live`が状態更新を受信して表示
+### PTY統合モニタリング
 
-### 従来方式: JSONL監視
-1. **ファイルウォッチ**: `~/.claude/projects/*.jsonl`の変更を監視
-2. **メッセージ解析**: JSONLエントリから状態を推測
-3. **状態判定**: メッセージ内容とタイムスタンプで状態分類
+```
+┌─ ccmonitor-launcher ─┐    ┌─ ccmonitor --live ─┐
+│ PTY Integration      │───>│ Monitor Server     │
+│ ├─ Claude Code       │    │ ├─ LiveUI          │
+│ ├─ VTE Parser        │    │ ├─ SessionManager  │
+│ └─ State Detection   │    │ └─ Unix Socket     │
+└──────────────────────┘    └────────────────────┘
+```
 
-## Phase 3の利点
+1. **クライアント・サーバー構成**: 中央監視サーバーと複数のランチャークライアント
+2. **PTY統合**: 真の端末エミュレーションによるClaude Codeとの透明な相互作用
+3. **VTEパーサー**: 完全な画面バッファ解析による正確な状態検出
+4. **Unix Domain Socket**: 高速クライアント・サーバー通信
+5. **リアルタイム更新**: 画面バッファ解析による即座の状態変化検出
 
-- ✅ **根本問題解決**: tool_use「許可待ち」vs「実行中」の正確な判別
-- ✅ **即座の更新**: 出力発生と同時の状態検出（遅延なし）
-- ✅ **高精度**: Claude Codeの実際のデバッグログに基づく判定
-- ✅ **透明性**: ユーザーのClaude操作に一切影響なし
-- ✅ **拡張性**: 将来のClaude Code変更に対応可能
+### VTEパーサーによる画面バッファ状態検出
 
-## いつPhase 3を使うか
+- **画面バッファ管理**: 80x24端末グリッドの完全なVTEパーサーサポート
+- **UIボックス検出**: ╭╮╰╯ Unicode罫線描画要素の自動検出
+- **コンテキスト解析**: UIボックス上部の行から実行コンテキストを抽出
+- **マルチツール対応**: Claude (🤖) とGemini (✨) CLIツールの識別
+- **リアルタイム更新**: 画面バッファ解析による即座の状態変化
 
-**Phase 3がおすすめ:**
-- リアルタイム開発ワークフロー
-- ツール実行フローのデバッグ
-- 即座の状態更新が必要
-- Claude Codeの動作分析
+### PTY+1列バッファアーキテクチャ
 
-**従来モードがおすすめ:**
-- 過去セッションの分析
-- 軽量な監視
-- プロセスラッパーが使えない環境
-- バックグラウンド監視
+UI箱重複問題の解決のため、以下の技術的解決策を実装：
 
-## 注意事項
+- **内部バッファ**: PTY列数+1（例：70列PTYに対し71列バッファ）
+- **外部表示**: 元のPTYサイズ（例：70列）
+- **UIボックス検出**: PTY表示範囲に限定
 
-- **TUIモード**: 通常のターミナルで実行してください
-- **非対話モード**: どの環境でも動作します（Claude Code含む）
-- **Phase 3**: `ccmonitor-launcher`が実行されていない場合、`ccmonitor --live`は適切なエラーメッセージを表示
-- Claude Code環境では `--no-tui` オプションを使用してください
+これにより、ink.jsライブラリの期待する動作とVTEパーサーの処理を整合させ、UIボックスの重複描画問題を根本的に解決。
+
+## 開発とテスト
+
+### ビルドコマンド
+
+```bash
+# プロジェクトのビルド
+cargo build --release
+
+# 開発実行
+cargo run                           # ライブモードで実行
+cargo run -- --no-tui              # 非対話スナップショットモード
+cargo run -- --verbose             # デバッグ用詳細出力
+
+# 状態検出のデバッグ（人的テスト）
+ccmonitor-launcher --verbose claude # 詳細な状態検出プロセス表示
+ccmonitor-launcher --verbose claude --help  # シンプルなコマンドでテスト
+```
+
+### テストの実行
+
+```bash
+# 全テストの実行
+cargo test
+
+# 詳細出力付きテスト
+cargo test --verbose
+
+# 特定のテストを実行
+cargo test claude_state_detector
+```
+
+### コード品質チェック
+
+```bash
+# フォーマット
+cargo fmt
+
+# 静的解析
+cargo clippy
+
+# フォーマットチェック
+cargo fmt --check
+
+# Clippyエラーを警告として扱う
+cargo clippy -- -D warnings
+```
+
+### デバッグとトラブルシューティング
+
+```bash
+# デバッグログをファイルに保存
+ccmonitor-launcher --verbose claude 2> debug.log
+
+# ログ内容を確認
+tail -f debug.log
+
+# 特定パターンを検索
+grep "UI_BOX" debug.log
+grep "STATE_CHANGE" debug.log
+grep "SCREEN" debug.log
+```
+
+**ログの見方:**
+
+- `📺 [SCREEN]`: 現在の画面バッファ状態
+- `📦 [UI_BOX]`: UIボックス検出と内容抽出
+- `🔍 [STATE]`: 状態検出解析
+- `🎯 [STATE_CHANGE]`: 実際の状態遷移
+- `📊 [CONTEXT]`: 実行コンテキスト抽出
 
 ## 環境設定
 
 ```bash
-# カスタムログディレクトリ
-echo "CLAUDE_LOG_DIR=/custom/path/to/claude/logs" > .env.local
+# Claude Codeで詳細ログを有効化（分析のため推奨）
+export ANTHROPIC_LOG=debug
 
-# デバッグモード
-echo "CCMONITOR_DEBUG=1" >> .env.local
+# カスタムソケットパス（オプション）
+export CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
+
+# Rustログレベル
+export RUST_LOG=debug
 ```
+
+## API・プログラマティック利用
+
+### Shared ライブラリ
+
+```rust
+use ccmonitor_shared::{SessionStatus, LauncherMessage, MonitorMessage};
+
+// セッション状態の確認
+let status = SessionStatus::Busy;
+println!("Status: {} ({})", status.description(), status.icon());
+```
+
+### 独自の状態検出器実装
+
+```rust
+use ccmonitor_launcher::{StateDetector, StatePatterns};
+
+struct CustomStateDetector {
+    patterns: StatePatterns,
+}
+
+impl StateDetector for CustomStateDetector {
+    fn process_output(&mut self, output: &str) -> Option<SessionState> {
+        // カスタム状態検出ロジック
+    }
+}
+```
+
+## CI/CD
+
+GitHub Actionsを使用した継続的統合：
+
+- **テスト**: 全テストケースの実行
+- **フォーマット**: `cargo fmt --check`
+- **Clippy**: `cargo clippy -- -D warnings`
+- **ビルド**: Ubuntu、Windows、macOSでのクロスプラットフォームビルド
 
 ## 依存関係
 
-- `ratatui`: ターミナルUI
-- `crossterm`: クロスプラットフォーム端末制御
-- `tokio`: 非同期ランタイム
-- `notify`: ファイルシステム監視
-- `serde`: JSON解析
-- `regex`: パターンマッチング（Phase 3）
+| クレート | 用途 |
+|----------|------|
+| `tokio` | 非同期ランタイム |
+| `ratatui` | ターミナルUI |
+| `crossterm` | クロスプラットフォーム端末制御 |
+| `portable-pty` | PTY（疑似端末）統合 |
+| `vte` | VTE（Virtual Terminal Emulator）パーサー |
+| `serde` | JSON解析 |
+| `regex` | パターンマッチング |
+| `unicode-width` | Unicode文字幅計算 |
+| `unicode-segmentation` | Unicodeテキスト分割 |
 
 ## ライセンス
 
-MIT License
+[MIT License](LICENSE)
+
+---
+
+**ccmonitor**は、Claude Codeセッションの監視とワークフロー最適化のための強力なツールです。リアルタイム状態検出により、開発者の生産性向上をサポートします。

@@ -1,9 +1,18 @@
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use chrono::{DateTime, Utc};
 
 use crate::session_manager::SessionManager;
 use crate::unicode_utils::truncate_str;
+
+/// ターミナル幅を取得（デフォルト80）
+fn get_terminal_width() -> usize {
+    if let Some((width, _)) = term_size::dimensions() {
+        width.max(40) // 最低40文字は確保
+    } else {
+        80 // デフォルト幅
+    }
+}
 
 /// ライブUI管理
 pub struct LiveUI {
@@ -11,6 +20,7 @@ pub struct LiveUI {
     update_receiver: broadcast::Receiver<()>,
     verbose: bool,
     last_update: Option<DateTime<Utc>>,
+    rendering: bool,
 }
 
 impl LiveUI {
@@ -24,6 +34,7 @@ impl LiveUI {
             update_receiver,
             verbose,
             last_update: None,
+            rendering: false,
         }
     }
 
@@ -41,12 +52,16 @@ impl LiveUI {
             tokio::select! {
                 // 更新通知受信
                 _ = self.update_receiver.recv() => {
-                    self.render_ui().await;
+                    if !self.rendering {
+                        self.render_ui().await;
+                    }
                 }
-                
+
                 // 定期更新（5秒間隔）
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
-                    self.render_ui().await;
+                    if !self.rendering {
+                        self.render_ui().await;
+                    }
                 }
 
                 // Ctrl+C 終了
@@ -62,11 +77,13 @@ impl LiveUI {
 
     /// UI描画
     async fn render_ui(&mut self) {
+        if self.rendering {
+            return; // 既に描画中の場合はスキップ
+        }
+
+        self.rendering = true;
         let now = Utc::now();
         self.last_update = Some(now);
-
-        // 画面クリア（カーソルを先頭に移動）
-        print!("\x1B[H\x1B[2J");
 
         // ヘッダー
         self.render_header().await;
@@ -76,20 +93,19 @@ impl LiveUI {
 
         // フッター
         self.render_footer();
+
+        self.rendering = false;
     }
 
     /// ヘッダー描画
     async fn render_header(&self) {
         let stats = self.session_manager.read().await.get_stats();
-        
-        println!("🔥 Claude Session Monitor - Live Mode");
-        println!("📊 Sessions: {} (Active: {})", 
-            stats.total_sessions, 
-            stats.active_sessions
-        );
-        println!("{}", "═".repeat(80));
-    }
+        let terminal_width = get_terminal_width();
 
+        println!("🔥 Claude Session Monitor - Live Mode");
+        println!("📊 Session: {}", stats.total_sessions);
+        println!("{}", "═".repeat(terminal_width));
+    }
 
     /// セッション詳細描画
     async fn render_sessions(&self) {
@@ -109,35 +125,18 @@ impl LiveUI {
             return;
         }
 
-        println!("📋 Active Sessions:");
-        
+        // セッション表示開始（ヘッダーなし）
+
         for (project_name, sessions) in filtered_sessions {
             println!("  📁 {}:", project_name);
-            
+
             for session in sessions {
                 let status_icon = session.status.icon();
                 let status_label = session.status.label();
                 let elapsed = format_duration_since(session.last_activity);
-                let confidence_str = if session.confidence > 0.0 {
-                    format!(" ({:.0}%)", session.confidence * 100.0)
-                } else {
-                    String::new()
-                };
+                // confidence表示を削除
 
-                // Show launcher context if available (first few chars)
-                let context_display = if let Some(ref context) = session.launcher_context {
-                    let short_context = truncate_str(context, 8);
-                    format!(" [{}]", short_context)
-                } else {
-                    String::new()
-                };
-
-                // Show UI execution context if available (実行状況の短縮表示)
-                let ui_exec_display = if let Some(ref ui_context) = session.ui_execution_context {
-                    format!(" {}", ui_context)
-                } else {
-                    String::new()
-                };
+                // 不要な表示項目を削除（ui_above_textで置き換え）
 
                 // Show tool type
                 let tool_type_display = if let Some(ref tool_type) = session.tool_type {
@@ -149,23 +148,30 @@ impl LiveUI {
                 } else {
                     ""
                 };
-                
+
                 let execution_indicator = if session.is_waiting_for_execution {
                     " ⏳"
                 } else {
                     ""
                 };
 
-                println!("    {}{} {}{} {} | {}{}{}{}", 
+                // UI box上のテキスト表示（⏺以降）
+                let ui_above_display = if let Some(ref ui_text) = session.ui_above_text {
+                    let terminal_width = get_terminal_width();
+                    let available_width = terminal_width.saturating_sub(20); // 余白を考慮
+                    format!(" {}", truncate_str(ui_text, available_width))
+                } else {
+                    String::new()
+                };
+
+                println!(
+                    "    {}{} {}{} | {}{}",
                     status_icon,
                     tool_type_display,
                     status_label,
                     execution_indicator,
-                    truncate_str(&session.id, 12),
                     elapsed,
-                    confidence_str,
-                    context_display,
-                    ui_exec_display
+                    ui_above_display
                 );
 
                 // 最新メッセージ表示
@@ -178,12 +184,12 @@ impl LiveUI {
                 if let Some(ref reset_time) = session.usage_reset_time {
                     println!("      ⏰ Usage resets at: {}", reset_time);
                 }
-                
+
                 // 詳細情報（verbose モード）
                 if self.verbose && !session.evidence.is_empty() {
                     println!("      🔍 Evidence: {}", session.evidence.join(", "));
                 }
-                
+
                 if self.verbose {
                     if let Some(ref context) = session.launcher_context {
                         println!("      📝 Context: {}", truncate_str(context, 50));
@@ -197,12 +203,12 @@ impl LiveUI {
     /// フッター描画
     fn render_footer(&self) {
         if let Some(last_update) = self.last_update {
-            println!("🔄 Last update: {} | Press Ctrl+C to exit", 
+            println!(
+                "🔄 Last update: {} | Press Ctrl+C to exit",
                 last_update.format("%H:%M:%S")
             );
         }
     }
-
 }
 
 /// 時間経過フォーマット
@@ -221,7 +227,6 @@ fn format_duration_since(time: DateTime<Utc>) -> String {
     }
 }
 
-
 /// 非インタラクティブ表示（--no-tui相当）
 pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbose: bool) {
     let session_manager = session_manager.read().await;
@@ -235,10 +240,7 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
         .collect();
 
     println!("📊 Claude Session Monitor - Snapshot");
-    println!("Sessions: {} (Active: {})", 
-        stats.total_sessions, 
-        stats.active_sessions
-    );
+    println!("Session: {}", stats.total_sessions);
     println!("{}", "═".repeat(50));
 
     if filtered_sessions.is_empty() {
@@ -250,19 +252,20 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
     for (project_name, sessions) in filtered_sessions {
         println!("\n📁 Project: {}", project_name);
         println!("   Sessions: {}", sessions.len());
-        
+
         for session in sessions {
             let status_icon = session.status.icon();
             let status_label = session.status.label();
             let elapsed = format_duration_since(session.last_activity);
-            
-            println!("   {} {} {} - {}", 
-                status_icon, 
+
+            println!(
+                "   {} {} {} - {}",
+                status_icon,
                 status_label,
-                truncate_str(&session.id, 12), 
+                truncate_str(&session.id, 12),
                 elapsed
             );
-            
+
             if let Some(ref message) = session.last_message {
                 let preview = truncate_str(message, 57);
                 println!("     💬 {}", preview);
@@ -282,18 +285,17 @@ mod tests {
     #[test]
     fn test_duration_formatting() {
         let now = Utc::now();
-        
+
         // 30秒前
         let time = now - chrono::Duration::seconds(30);
         assert!(format_duration_since(time).contains("s ago"));
-        
+
         // 5分前
         let time = now - chrono::Duration::minutes(5);
         assert!(format_duration_since(time).contains("m ago"));
-        
+
         // 2時間前
         let time = now - chrono::Duration::hours(2);
         assert!(format_duration_since(time).contains("h ago"));
     }
-
 }

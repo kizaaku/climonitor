@@ -89,7 +89,7 @@ mod tests {
         let tool = ClaudeTool::new();
         let args = vec!["--project".to_string(), "test-project".to_string()];
         let working_dir = PathBuf::from("/tmp");
-        
+
         let result = tool.guess_project_name(&args, &working_dir);
         assert_eq!(result, Some("test-project".to_string()));
     }
@@ -99,7 +99,7 @@ mod tests {
         let tool = ClaudeTool::new();
         let args = vec![];
         let working_dir = PathBuf::from("/home/user/my-project");
-        
+
         let result = tool.guess_project_name(&args, &working_dir);
         assert_eq!(result, Some("my-project".to_string()));
     }
@@ -108,7 +108,7 @@ mod tests {
     fn test_claude_tool_validate_args() {
         let tool = ClaudeTool::new();
         let args = vec!["--help".to_string()];
-        
+
         assert!(tool.validate_args(&args).is_ok());
     }
 }

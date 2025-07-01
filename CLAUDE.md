@@ -48,7 +48,7 @@ This is a Rust CLI tool that provides real-time monitoring of Claude Code sessio
 - **`launcher_client.rs`**: Claude Code wrapper client with PTY integration and state reporting
 
 #### VTE Parser-based Screen Buffer Detection (Current Implementation)
-- **`screen_buffer.rs`**: VTE parser-based terminal screen buffer simulation with 80x24 grid
+- **`screen_buffer.rs`**: VTE parser-based terminal screen buffer simulation with PTY+1 column buffer
 - **`screen_state_detector.rs`**: Screen buffer-based state detection using UI box parsing
 - **`screen_claude_detector.rs`**: Claude-specific screen state detector implementation
 - **`state_detector.rs`**: State detection abstraction layer and factory patterns
@@ -70,7 +70,7 @@ This is a Rust CLI tool that provides real-time monitoring of Claude Code sessio
 1. **PTY Creation**: `portable-pty` creates pseudo-terminal with proper size detection
 2. **Process Spawning**: Claude Code launched in PTY environment with preserved interactivity
 3. **I/O Monitoring**: Simultaneous stdout/stderr capture without disrupting user interaction
-4. **Screen Buffer Processing**: VTE parser maintains complete 80x24 terminal screen state with UI box detection
+4. **Screen Buffer Processing**: VTE parser maintains complete terminal screen state with PTY+1 column buffer for UI box detection
 5. **Signal Handling**: Proper signal forwarding for graceful shutdown and resize events
 
 ### Session Status Logic
@@ -128,6 +128,68 @@ The codebase includes comprehensive Unicode support through `unicode_utils.rs`:
 - **Error Resilience**: Continues operation even if launcher clients disconnect
 - **Memory Efficiency**: Bounded channels and automatic cleanup of stale sessions
 - **Cross-Platform**: Uses portable-pty for consistent terminal handling
+
+## UI Box Duplication Problem Resolution
+
+### Problem Description
+The VTE parser experienced UI box duplication issues where ink.js library (Claude Code CLI framework) UI boxes appeared multiple times on screen, creating visual artifacts that interfered with state detection.
+
+### Root Cause Analysis
+The issue was caused by a mismatch between ink.js expectations and VTE parser buffer dimensions:
+
+1. **ink.js Behavior**: Draws UI boxes using relative cursor movements (`ESC[1A ESC[2K` sequences)
+2. **Line End Processing**: When cursor reaches column boundary (e.g., 70), automatic line wrapping occurs
+3. **Buffer Boundary Issue**: VTE parser buffer matched PTY size exactly, causing premature line wrapping
+4. **Position Mismatch**: ink.js expected cursor positions differed from actual VTE parser positions
+5. **Incomplete Clearing**: Previous UI box content remained visible due to clearing sequence misalignment
+
+### Technical Solution
+**PTY+1 Column Buffer Architecture** implemented in `screen_buffer.rs`:
+
+```rust
+// Buffer creation with +1 column
+let buffer_cols = cols + 1;  // PTY cols + 1
+let grid = vec![vec![Cell::empty(); buffer_cols]; rows];
+
+// Display output limited to original PTY size
+let pty_cols = self.cols.saturating_sub(1);
+self.grid.iter().skip(start_row).map(|row| {
+    row.iter().take(pty_cols).map(|cell| cell.char).collect()
+}).collect()
+```
+
+### Implementation Details
+
+#### Buffer Architecture
+- **Internal Buffer**: PTY columns + 1 (e.g., 71 columns for 70-column PTY)
+- **External Display**: Original PTY size (e.g., 70 columns)
+- **UI Box Detection**: Limited to PTY display range
+
+#### Benefits
+1. **Prevents Premature Line Wrapping**: Extra column provides buffer space for ink.js cursor positioning
+2. **Maintains Display Compatibility**: Output functions return original PTY-sized content
+3. **Preserves UI Box Integrity**: ink.js clearing sequences target correct screen positions
+4. **No Visual Side Effects**: Extra column is invisible to monitoring and display functions
+
+#### Debugging Enhancements
+Enhanced CSI K (line clearing) logging for troubleshooting:
+```rust
+if self.verbose {
+    let old_content: String = if let Some(row) = self.grid.get(self.cursor_row) {
+        row.iter().map(|c| c.char).collect::<String>().trim().to_string()
+    } else {
+        "N/A".to_string()
+    };
+    eprintln!("🧹 [CLEAR_LINE] Mode=2 clearing entire line {} old_content: '{}'", 
+             self.cursor_row, old_content);
+}
+```
+
+### Resolution Impact
+- **Eliminated UI Box Duplication**: Multiple UI boxes no longer appear on screen
+- **Improved State Detection Accuracy**: Clean UI boxes enable precise status monitoring
+- **Enhanced Claude Code Compatibility**: VTE parser now matches real terminal behavior
+- **Maintained Performance**: Minimal overhead from single additional column per row
 
 ## Environment Configuration
 

@@ -1,10 +1,12 @@
 [package]
 name = "ccmonitor-monitor"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Real-time monitoring display for Claude Code sessions"
-authors = ["kaz"]
-license = "MIT"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "ccmonitor"
@@ -21,3 +23,4 @@ regex = "1.10"
 signal-hook = "0.3"
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+term_size = "0.3"

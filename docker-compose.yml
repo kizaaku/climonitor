@@ -1,0 +1,34 @@
+version: '3.8'
+
+volumes:
+  ccmonitor_sockets:
+
+services:
+  # 注意: このDocker構成は開発・テスト用です
+  # 実際のClaude Code CLIがコンテナ内にないため実用的ではありません
+  
+  launcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ccmonitor-launcher-image
+    container_name: ccmonitor-launcher
+    volumes:
+      - ccmonitor_sockets:/tmp
+    environment:
+      - CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
+    # 実際のClaude Codeの代わりにhelpを表示（デモ用）
+    command: ["ccmonitor-launcher", "--help"]
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ccmonitor-monitor-image
+    container_name: ccmonitor-monitor
+    volumes:
+      - ccmonitor_sockets:/tmp
+    environment:
+      - CCMONITOR_SOCKET_PATH=/tmp/ccmonitor.sock
+    # 非インタラクティブモードで実行
+    command: ["ccmonitor", "--no-tui"]

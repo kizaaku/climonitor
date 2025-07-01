@@ -6,6 +6,17 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.2.0"
+authors = ["ccmonitor contributors"]
+license = "MIT"
+repository = "https://github.com/kizaaku/ccmonitor"
+homepage = "https://github.com/kizaaku/ccmonitor"
+description = "Real-time monitoring and state detection for Claude Code sessions"
+keywords = ["claude", "monitoring", "cli", "terminal", "pty"]
+categories = ["command-line-utilities", "development-tools"]
+edition = "2021"
+
 [workspace.dependencies]
 # Common dependencies across workspace
 tokio = { version = "1.0", features = ["full"] }

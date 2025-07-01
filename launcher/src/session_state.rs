@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use ccmonitor_shared::SessionStatus;
+use std::collections::VecDeque;
 
 /// Claude セッションの状態
 #[derive(Debug, Clone, PartialEq)]
@@ -59,16 +59,16 @@ impl SessionStateDetector {
 
         // 状態を検出
         let new_state = self.detect_state();
-        
+
         // 状態が変化した場合のみ通知
         if new_state != self.current_state {
             let old_state = self.current_state.clone();
             self.current_state = new_state.clone();
-            
+
             if self.verbose {
                 println!("🔄 State changed: {} -> {}", old_state, new_state);
             }
-            
+
             Some(new_state)
         } else {
             None
@@ -95,9 +95,9 @@ impl SessionStateDetector {
     fn add_line(&mut self, line: &str) {
         // ANSI エスケープシーケンスを除去
         let clean_line = self.strip_ansi(line);
-        
+
         self.output_buffer.push_back(clean_line);
-        
+
         // バッファサイズを制限
         while self.output_buffer.len() > self.max_buffer_lines {
             self.output_buffer.pop_front();
@@ -106,7 +106,8 @@ impl SessionStateDetector {
 
     /// 出力バッファから状態を検出
     fn detect_state(&self) -> SessionState {
-        let recent_lines: Vec<&String> = self.output_buffer
+        let recent_lines: Vec<&String> = self
+            .output_buffer
             .iter()
             .rev()
             .take(10) // 最後の10行を確認
@@ -164,48 +165,48 @@ impl SessionStateDetector {
     /// エラーパターンの検出
     fn is_error_pattern(&self, line: &str) -> bool {
         let line_lower = line.to_lowercase();
-        line_lower.contains("error:") ||
-        line_lower.contains("failed:") ||
-        line_lower.contains("exception") ||
-        line_lower.contains("❌") ||
-        line_lower.contains("✗")
+        line_lower.contains("error:")
+            || line_lower.contains("failed:")
+            || line_lower.contains("exception")
+            || line_lower.contains("❌")
+            || line_lower.contains("✗")
     }
 
     /// ユーザー入力待ちパターンの検出
     fn is_waiting_pattern(&self, line: &str) -> bool {
         let line_lower = line.to_lowercase();
-        line_lower.contains("proceed?") ||
-        line_lower.contains("continue?") ||
-        line_lower.contains("confirm") ||
-        line_lower.contains("y/n") ||
-        line_lower.contains("press") ||
-        line_lower.contains("wait") ||
-        line_lower.contains("⏳") ||
-        line_lower.contains("🤔")
+        line_lower.contains("proceed?")
+            || line_lower.contains("continue?")
+            || line_lower.contains("confirm")
+            || line_lower.contains("y/n")
+            || line_lower.contains("press")
+            || line_lower.contains("wait")
+            || line_lower.contains("⏳")
+            || line_lower.contains("🤔")
     }
 
     /// ビジー状態パターンの検出
     fn is_busy_pattern(&self, line: &str) -> bool {
         let line_lower = line.to_lowercase();
-        line_lower.contains("processing") ||
-        line_lower.contains("executing") ||
-        line_lower.contains("running") ||
-        line_lower.contains("analyzing") ||
-        line_lower.contains("thinking") ||
-        line_lower.contains("working") ||
-        line_lower.contains("applying") ||
-        line_lower.contains("trying") ||
-        line_lower.contains("retrying") ||
-        line_lower.contains("分析中") ||
-        line_lower.contains("処理中") ||
-        line_lower.contains("実行中") ||
-        line.contains("🔧") ||
-        line.contains("⚙️") ||
-        line.contains("📝") ||
-        line.contains("📊") ||
-        line.contains("🔍") ||
-        line.contains("🚀") ||
-        line_lower.starts_with("claude code:") // Claude Code のプロンプト
+        line_lower.contains("processing")
+            || line_lower.contains("executing")
+            || line_lower.contains("running")
+            || line_lower.contains("analyzing")
+            || line_lower.contains("thinking")
+            || line_lower.contains("working")
+            || line_lower.contains("applying")
+            || line_lower.contains("trying")
+            || line_lower.contains("retrying")
+            || line_lower.contains("分析中")
+            || line_lower.contains("処理中")
+            || line_lower.contains("実行中")
+            || line.contains("🔧")
+            || line.contains("⚙️")
+            || line.contains("📝")
+            || line.contains("📊")
+            || line.contains("🔍")
+            || line.contains("🚀")
+            || line_lower.starts_with("claude code:") // Claude Code のプロンプト
     }
 
     /// アイドル状態パターンの検出
@@ -235,12 +236,12 @@ impl SessionStateDetector {
     fn strip_ansi(&self, text: &str) -> String {
         let mut result = String::new();
         let mut chars = text.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '\x1b' && chars.peek() == Some(&'[') {
                 // ANSI エスケープシーケンスをスキップ
                 chars.next(); // '['をスキップ
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     if ch.is_ascii_alphabetic() {
                         break; // 終端文字で終了
                     }
@@ -249,7 +250,7 @@ impl SessionStateDetector {
                 result.push(ch);
             }
         }
-        
+
         result
     }
 
@@ -271,19 +272,28 @@ mod tests {
     #[test]
     fn test_state_detection() {
         let mut detector = SessionStateDetector::new(false);
-        
+
         // エラー状態のテスト
-        assert_eq!(detector.process_output("Error: Something went wrong"), Some(SessionState::Error));
+        assert_eq!(
+            detector.process_output("Error: Something went wrong"),
+            Some(SessionState::Error)
+        );
         assert_eq!(detector.current_state(), &SessionState::Error);
-        
-        // ビジー状態のテスト  
+
+        // ビジー状態のテスト
         detector = SessionStateDetector::new(false);
-        assert_eq!(detector.process_output("🔧 Processing your request..."), Some(SessionState::Busy));
+        assert_eq!(
+            detector.process_output("🔧 Processing your request..."),
+            Some(SessionState::Busy)
+        );
         assert_eq!(detector.current_state(), &SessionState::Busy);
-        
+
         // アイドル状態のテスト
         detector = SessionStateDetector::new(false);
-        assert_eq!(detector.process_output("✅ Task completed successfully"), Some(SessionState::Idle));
+        assert_eq!(
+            detector.process_output("✅ Task completed successfully"),
+            Some(SessionState::Idle)
+        );
         assert_eq!(detector.current_state(), &SessionState::Idle);
     }
 

@@ -1,18 +1,17 @@
 // launcher_client.rs の修正箇所
 
+use crate::state_detector::StateDetector;
 use anyhow::Result;
+use chrono::Utc;
+use portable_pty::MasterPty;
+use serde_json;
 use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
-use portable_pty::MasterPty;
-use serde_json;
-use chrono::Utc;
-use crate::state_detector::StateDetector;
-
 
 use crate::tool_wrapper::ToolWrapper;
-use ccmonitor_shared::{LauncherToMonitor, SessionStatus, generate_connection_id};
+use ccmonitor_shared::{generate_connection_id, LauncherToMonitor, SessionStatus};
 
 /// ターミナル状態の自動復元ガード
 #[cfg(unix)]
@@ -38,7 +37,7 @@ impl Drop for TerminalGuard {
         #[cfg(unix)]
         {
             use std::os::fd::BorrowedFd;
-            
+
             // ターミナルかどうかチェック
             if !nix::unistd::isatty(self.fd).unwrap_or(false) {
                 if self.verbose {
@@ -46,25 +45,25 @@ impl Drop for TerminalGuard {
                 }
                 return;
             }
-            
+
             if self.verbose {
                 eprintln!("🔓 Restoring terminal settings");
             }
-            
+
             // SAFETY: fd は有効なファイルディスクリプタです
             let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
-            
+
             if let Err(e) = nix::sys::termios::tcsetattr(
-                borrowed_fd, 
-                nix::sys::termios::SetArg::TCSANOW, 
-                &self.original
+                borrowed_fd,
+                nix::sys::termios::SetArg::TCSANOW,
+                &self.original,
             ) {
                 if self.verbose {
                     eprintln!("⚠️  Failed to restore terminal: {}", e);
                 }
             }
         }
-        
+
         #[cfg(not(unix))]
         {
             if self.verbose {
@@ -84,7 +83,6 @@ pub struct LauncherClient {
     verbose: bool,
     log_file: Option<PathBuf>,
 }
-
 
 impl LauncherClient {
     /// 新しいLauncherClientを作成
@@ -129,21 +127,30 @@ impl LauncherClient {
 
         // Monitor サーバーに接続（失敗しても続行）
         if self.verbose {
-            eprintln!("🔄 Attempting to connect to monitor server at {}", socket_path.display());
+            eprintln!(
+                "🔄 Attempting to connect to monitor server at {}",
+                socket_path.display()
+            );
             eprintln!("🔍 Socket path exists: {}", socket_path.exists());
         }
-        
+
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(stream) => {
                 self.socket_stream = Some(stream);
                 if self.verbose {
-                    eprintln!("🔗 Connected to monitor server at {}", socket_path.display());
+                    eprintln!(
+                        "🔗 Connected to monitor server at {}",
+                        socket_path.display()
+                    );
                 }
                 // 接続メッセージは run_claude() 開始時に送信
             }
             Err(e) => {
                 if self.verbose {
-                    eprintln!("⚠️  Failed to connect to monitor server: {}. Running without monitoring.", e);
+                    eprintln!(
+                        "⚠️  Failed to connect to monitor server: {}. Running without monitoring.",
+                        e
+                    );
                 }
             }
         }
@@ -167,27 +174,31 @@ impl LauncherClient {
                     crate::cli_tool::CliToolType::Gemini => "gemini".to_string(),
                 },
                 claude_args: self.tool_wrapper.get_args().to_vec(),
-                working_dir: self.tool_wrapper.get_working_dir().cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                working_dir: self
+                    .tool_wrapper
+                    .get_working_dir()
+                    .cloned()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
                 timestamp: Utc::now(),
             };
-            
+
             if self.verbose {
-                eprintln!("📤 Sending connect message: launcher_id={}, project={:?}", 
-                         self.launcher_id, self.project_name);
+                eprintln!(
+                    "📤 Sending connect message: launcher_id={}, project={:?}",
+                    self.launcher_id, self.project_name
+                );
             }
-            
+
             let msg_bytes = serde_json::to_vec(&connect_msg)?;
             stream.write_all(&msg_bytes).await?;
             stream.write_all(b"\n").await?;
             stream.flush().await?;
-            
+
             if self.verbose {
                 eprintln!("✅ Connect message sent successfully");
             }
-        } else {
-            if self.verbose {
-                eprintln!("⚠️  No socket connection available for sending connect message");
-            }
+        } else if self.verbose {
+            eprintln!("⚠️  No socket connection available for sending connect message");
         }
         Ok(())
     }
@@ -199,11 +210,11 @@ impl LauncherClient {
                 launcher_id: self.launcher_id.clone(),
                 timestamp: Utc::now(),
             };
-            
+
             let msg_bytes = serde_json::to_vec(&disconnect_msg)?;
             stream.write_all(&msg_bytes).await?;
             stream.write_all(b"\n").await?;
-            
+
             if self.verbose {
                 eprintln!("📤 Sent disconnect message to monitor");
             }
@@ -214,7 +225,10 @@ impl LauncherClient {
     /// Claude プロセス起動・監視（修正版）
     pub async fn run_claude(&mut self) -> Result<()> {
         if self.verbose {
-            eprintln!("🚀 Starting CLI tool: {}", self.tool_wrapper.to_command_string());
+            eprintln!(
+                "🚀 Starting CLI tool: {}",
+                self.tool_wrapper.to_command_string()
+            );
         }
 
         // Monitor に接続できていない場合は単純にClaude実行
@@ -241,9 +255,10 @@ impl LauncherClient {
                 session_id: self.session_id.clone(),
                 status: SessionStatus::Idle,
                 ui_execution_context: None,
+                ui_above_text: None,
                 timestamp: Utc::now(),
             };
-            
+
             if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
                 let _ = stream.write_all(&msg_bytes).await;
                 let _ = stream.write_all(b"\n").await;
@@ -251,13 +266,17 @@ impl LauncherClient {
         }
 
         // ターミナルガードはmain関数で作成済み（ここでは作らない）
-        let terminal_guard = DummyTerminalGuard { verbose: self.verbose };
-        
+        let terminal_guard = DummyTerminalGuard {
+            verbose: self.verbose,
+        };
+
         // Claude プロセス起動（PTYを使用してTTY環境を提供）
         let (mut claude_process, pty_master) = self.tool_wrapper.spawn_with_pty()?;
-        
+
         // PTYベースの双方向I/O開始
-        let pty_handle = self.start_pty_bidirectional_io(pty_master, terminal_guard).await?;
+        let pty_handle = self
+            .start_pty_bidirectional_io(pty_master, terminal_guard)
+            .await?;
 
         if self.verbose {
             eprintln!("👀 Monitoring started for Claude process");
@@ -265,13 +284,13 @@ impl LauncherClient {
 
         // Claude プロセスの終了を待つタスクを一度だけ起動
         let mut wait_task = tokio::task::spawn_blocking(move || claude_process.wait());
-        
+
         // シグナルハンドリングとリサイズ処理
         let exit_status = self.wait_with_signals(&mut wait_task).await;
 
         // PTYタスクを終了
         pty_handle.abort();
-        
+
         // 少し待機してI/Oが完了するのを待つ
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -322,12 +341,11 @@ impl LauncherClient {
         Ok(())
     }
 
-
     /// PTY 双方向I/Oタスク開始（修正版）
     async fn start_pty_bidirectional_io(
-        &self, 
+        &self,
         pty_master: Box<dyn MasterPty + Send>,
-        _terminal_guard: DummyTerminalGuard
+        _terminal_guard: DummyTerminalGuard,
     ) -> Result<JoinHandle<()>> {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
@@ -343,7 +361,8 @@ impl LauncherClient {
                 log_file,
                 tool_type,
                 _terminal_guard,
-            ).await;
+            )
+            .await;
         });
 
         Ok(handle)
@@ -409,13 +428,14 @@ impl LauncherClient {
                 verbose,
                 log_writer,
                 tool_type,
-            ).await;
+            )
+            .await;
         });
 
         let mut stdin_to_pty = tokio::spawn(async move {
             Self::handle_stdin_to_pty_simple(pty_writer, verbose).await;
         });
-        
+
         // タスクの完了を待つ
         tokio::select! {
             _ = &mut pty_to_stdout => {
@@ -438,13 +458,16 @@ impl LauncherClient {
     /// プロセス終了とシグナルを待機（修正版）
     #[cfg(unix)]
     async fn wait_with_signals(
-        &self, 
-        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>
+        &self,
+        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>,
     ) -> Result<portable_pty::ExitStatus> {
-        let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
-        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
-        
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+        let mut sigint =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+
         loop {
             tokio::select! {
                 result = &mut *wait_task => {
@@ -482,8 +505,8 @@ impl LauncherClient {
     /// プロセス終了とシグナルを待機（非Unix版）
     #[cfg(not(unix))]
     async fn wait_with_signals(
-        &self, 
-        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>
+        &self,
+        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>,
     ) -> Result<portable_pty::ExitStatus> {
         loop {
             tokio::select! {
@@ -515,15 +538,15 @@ impl LauncherClient {
     ) {
         use crate::state_detector::create_state_detector;
         use ccmonitor_shared::SessionStatus;
-        
+
         let mut state_detector = create_state_detector(tool_type, verbose);
         let mut last_status = SessionStatus::Idle;
         use std::io::Read;
         use tokio::io::AsyncWriteExt;
-        
+
         let mut buffer = [0u8; 8192];
         let mut stdout = tokio::io::stdout();
-        
+
         loop {
             match pty_reader.read(&mut buffer) {
                 Ok(0) => {
@@ -535,7 +558,7 @@ impl LauncherClient {
                 Ok(n) => {
                     let data = &buffer[..n];
                     let output_str = String::from_utf8_lossy(data);
-                    
+
                     // 標準出力に書き込み
                     if let Err(e) = stdout.write_all(data).await {
                         if verbose {
@@ -543,7 +566,7 @@ impl LauncherClient {
                         }
                         break;
                     }
-                    
+
                     // ログファイルに書き込み
                     if let Some(ref mut log_file) = log_writer {
                         if let Err(e) = log_file.write_all(data).await {
@@ -552,21 +575,31 @@ impl LauncherClient {
                             }
                         }
                     }
-                    
+
                     // 状態検出とモニター通知
                     if let Some(_new_state) = state_detector.process_output(&output_str) {
                         let new_status = state_detector.to_session_status();
                         if new_status != last_status {
                             if verbose {
-                                eprintln!("🔄 Status changed: {:?} -> {:?}", last_status, new_status);
+                                eprintln!(
+                                    "🔄 Status changed: {:?} -> {:?}",
+                                    last_status, new_status
+                                );
                             }
                             last_status = new_status.clone();
-                            
+
                             // モニターサーバーに状態更新を送信（ベストエフォート）
-                            Self::send_status_update_async(&launcher_id, &session_id, new_status, &*state_detector, verbose).await;
+                            Self::send_status_update_async(
+                                &launcher_id,
+                                &session_id,
+                                new_status,
+                                &*state_detector,
+                                verbose,
+                            )
+                            .await;
                         }
                     }
-                    
+
                     // 出力をフラッシュ
                     let _ = stdout.flush().await;
                     if let Some(ref mut log_file) = log_writer {
@@ -590,15 +623,15 @@ impl LauncherClient {
     ) {
         use std::io::Write;
         use tokio::io::AsyncReadExt;
-        
+
         // rawモードはmain関数で既に設定済みなので、ここでは設定しない
         if verbose {
             eprintln!("📡 Starting stdin to PTY forwarding (raw mode already set by main)");
         }
-        
+
         let mut stdin = tokio::io::stdin();
         let mut buffer = [0u8; 1024];
-        
+
         loop {
             match stdin.read(&mut buffer).await {
                 Ok(0) => {
@@ -609,14 +642,14 @@ impl LauncherClient {
                 }
                 Ok(n) => {
                     let data = &buffer[..n];
-                    
+
                     if let Err(e) = pty_writer.write_all(data) {
                         if verbose {
                             eprintln!("⚠️  Failed to write to PTY: {}", e);
                         }
                         break;
                     }
-                    
+
                     if let Err(e) = pty_writer.flush() {
                         if verbose {
                             eprintln!("⚠️  Failed to flush PTY: {}", e);
@@ -632,12 +665,11 @@ impl LauncherClient {
                 }
             }
         }
-        
+
         if verbose {
             eprintln!("📡 Stdin to PTY forwarding ended");
         }
     }
-
 
     /// 非同期でステータス更新をモニターサーバーに送信（フォールバック用）
     async fn send_status_update_async(
@@ -648,14 +680,13 @@ impl LauncherClient {
         verbose: bool,
     ) {
         // 新しい接続でステータス更新を送信（ベストエフォート）
-        let socket_path = std::env::var("CCMONITOR_SOCKET_PATH")
-            .unwrap_or_else(|_| {
-                std::env::temp_dir()
-                    .join("ccmonitor.sock")
-                    .to_string_lossy()
-                    .to_string()
-            });
-        
+        let socket_path = std::env::var("CCMONITOR_SOCKET_PATH").unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("ccmonitor.sock")
+                .to_string_lossy()
+                .to_string()
+        });
+
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
                 let update_msg = LauncherToMonitor::StateUpdate {
@@ -663,14 +694,15 @@ impl LauncherClient {
                     session_id: session_id.to_string(),
                     status: status.clone(),
                     ui_execution_context: detector.get_ui_execution_context(),
+                    ui_above_text: detector.get_ui_above_text(),
                     timestamp: Utc::now(),
                 };
-                
+
                 if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
                     let _ = stream.write_all(&msg_bytes).await;
                     let _ = stream.write_all(b"\n").await;
                     let _ = stream.flush().await;
-                    
+
                     if verbose {
                         eprintln!("📤 Sent fallback status update: {:?}", status);
                     }
@@ -689,27 +721,31 @@ impl LauncherClient {
 /// 強制的にターミナルをcooked modeに復元（エラー時の緊急用）
 #[cfg(unix)]
 pub fn force_restore_terminal() {
-    use std::os::unix::io::AsRawFd;
     use std::os::fd::BorrowedFd;
-    
+    use std::os::unix::io::AsRawFd;
+
     let stdin_fd = std::io::stdin().as_raw_fd();
     if nix::unistd::isatty(stdin_fd).unwrap_or(false) {
         let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-        
+
         // 標準的なcooked mode設定を適用
         if let Ok(mut termios) = nix::sys::termios::tcgetattr(borrowed_fd) {
             // ENABLEフラグを設定（cooked mode）
-            termios.local_flags |= nix::sys::termios::LocalFlags::ICANON 
-                | nix::sys::termios::LocalFlags::ECHO 
-                | nix::sys::termios::LocalFlags::ECHOE 
-                | nix::sys::termios::LocalFlags::ECHOK 
+            termios.local_flags |= nix::sys::termios::LocalFlags::ICANON
+                | nix::sys::termios::LocalFlags::ECHO
+                | nix::sys::termios::LocalFlags::ECHOE
+                | nix::sys::termios::LocalFlags::ECHOK
                 | nix::sys::termios::LocalFlags::ISIG;
-            
+
             // INPUTフラグも修正
-            termios.input_flags |= nix::sys::termios::InputFlags::ICRNL 
-                | nix::sys::termios::InputFlags::IXON;
-            
-            let _ = nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &termios);
+            termios.input_flags |=
+                nix::sys::termios::InputFlags::ICRNL | nix::sys::termios::InputFlags::IXON;
+
+            let _ = nix::sys::termios::tcsetattr(
+                borrowed_fd,
+                nix::sys::termios::SetArg::TCSANOW,
+                &termios,
+            );
         }
     }
 }
@@ -722,11 +758,11 @@ pub fn force_restore_terminal() {
 /// グローバル用のターミナルガード作成関数（main関数で使用）
 #[cfg(unix)]
 pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
-    use std::os::unix::io::AsRawFd;
     use std::os::fd::BorrowedFd;
-    
+    use std::os::unix::io::AsRawFd;
+
     let stdin_fd = std::io::stdin().as_raw_fd();
-    
+
     // stdinがターミナルかどうかチェック
     if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
         if verbose {
@@ -740,23 +776,27 @@ pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
             verbose,
         });
     }
-    
+
     // SAFETY: stdin_fd は有効なファイルディスクリプタです
     let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-    
+
     let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
         .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
-    
+
     // ターミナルをrawモードに設定
     let mut raw_termios = original_termios.clone();
     nix::sys::termios::cfmakeraw(&mut raw_termios);
-    nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &raw_termios)
-        .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
-    
+    nix::sys::termios::tcsetattr(
+        borrowed_fd,
+        nix::sys::termios::SetArg::TCSANOW,
+        &raw_termios,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
+
     if verbose {
         eprintln!("🔒 Terminal guard created with raw mode");
     }
-    
+
     Ok(TerminalGuard {
         fd: stdin_fd,
         original: original_termios,
@@ -767,7 +807,5 @@ pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
 #[cfg(not(unix))]
 pub fn create_terminal_guard_global(verbose: bool) -> Result<TerminalGuard> {
     // 非Unix環境では何もしない
-    Ok(TerminalGuard {
-        verbose,
-    })
+    Ok(TerminalGuard { verbose })
 }

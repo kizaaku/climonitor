@@ -1,8 +1,8 @@
 // screen_claude_detector.rs - Screen buffer based Claude state detector
 
-use crate::state_detector::{StateDetector, StatePatterns};
 use crate::screen_state_detector::ScreenStateDetector;
 use crate::session_state::SessionState;
+use crate::state_detector::{StateDetector, StatePatterns};
 use ccmonitor_shared::SessionStatus;
 
 /// スクリーンバッファベースのClaude状態検出器
@@ -51,9 +51,7 @@ impl ScreenClaudeStateDetector {
 
         let screen_detector = ScreenStateDetector::new(patterns, verbose);
 
-        Self {
-            screen_detector,
-        }
+        Self { screen_detector }
     }
 }
 
@@ -80,5 +78,9 @@ impl StateDetector for ScreenClaudeStateDetector {
 
     fn get_ui_execution_context(&self) -> Option<String> {
         self.screen_detector.get_ui_execution_context()
+    }
+
+    fn get_ui_above_text(&self) -> Option<String> {
+        self.screen_detector.get_ui_above_text()
     }
 }

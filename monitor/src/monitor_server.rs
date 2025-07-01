@@ -8,8 +8,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 
-use ccmonitor_shared::LauncherToMonitor;
 use crate::session_manager::SessionManager;
+use ccmonitor_shared::LauncherToMonitor;
 
 /// 接続情報
 #[derive(Debug)]
@@ -88,7 +88,7 @@ impl MonitorServer {
                 accept_result = async {
                     match &self.listener {
                         Some(listener) => listener.accept().await,
-                        None => return Err(std::io::Error::new(std::io::ErrorKind::Other, "No listener")),
+                        None => Err(std::io::Error::other("No listener")),
                     }
                 } => {
                     match accept_result {
@@ -120,7 +120,11 @@ impl MonitorServer {
     }
 
     /// 新しい接続を処理
-    async fn handle_new_connection(&mut self, connection_id: String, stream: UnixStream) -> Result<()> {
+    async fn handle_new_connection(
+        &mut self,
+        connection_id: String,
+        stream: UnixStream,
+    ) -> Result<()> {
         let connection = Connection {
             id: connection_id.clone(),
             stream,
@@ -128,7 +132,10 @@ impl MonitorServer {
         };
 
         // 接続を登録
-        self.connections.write().await.insert(connection_id.clone(), connection);
+        self.connections
+            .write()
+            .await
+            .insert(connection_id.clone(), connection);
 
         // 接続ハンドラータスクを開始
         let task_handle = self.spawn_connection_handler(connection_id).await;
@@ -153,7 +160,9 @@ impl MonitorServer {
                 ui_update_sender,
                 verbose,
                 log_file,
-            ).await {
+            )
+            .await
+            {
                 if verbose {
                     eprintln!("⚠️  Connection {} error: {}", connection_id, e);
                 }
@@ -177,7 +186,10 @@ impl MonitorServer {
                 Some(connection) => connection.stream,
                 None => {
                     if verbose {
-                        eprintln!("⚠️  Connection {} not found in connections map", connection_id);
+                        eprintln!(
+                            "⚠️  Connection {} not found in connections map",
+                            connection_id
+                        );
                     }
                     return Err(anyhow::anyhow!("Connection not found: {}", connection_id));
                 }
@@ -192,26 +204,31 @@ impl MonitorServer {
 
         loop {
             buffer.clear();
-            
+
             match reader.read_line(&mut buffer).await {
                 Ok(0) => {
                     // 接続が閉じられた
                     if verbose {
                         println!("📴 Connection closed: {}", connection_id);
                     }
-                    
+
                     // 接続が切断された場合、関連するlauncherを削除
-                    Self::cleanup_disconnected_launcher(&connection_id, &session_manager, verbose).await;
-                    
+                    Self::cleanup_disconnected_launcher(&connection_id, &session_manager, verbose)
+                        .await;
+
                     break;
                 }
                 Ok(bytes_read) => {
                     // メッセージを受信
                     if verbose {
-                        println!("📥 Raw message from {} ({} bytes): {}", 
-                                connection_id, bytes_read, buffer.trim());
+                        println!(
+                            "📥 Raw message from {} ({} bytes): {}",
+                            connection_id,
+                            bytes_read,
+                            buffer.trim()
+                        );
                     }
-                    
+
                     if let Ok(message) = serde_json::from_str::<LauncherToMonitor>(buffer.trim()) {
                         if verbose {
                             println!("📨 Parsed message from {}: {:?}", connection_id, message);
@@ -226,20 +243,23 @@ impl MonitorServer {
 
                         // UI更新通知
                         let _ = ui_update_sender.send(());
-                    } else {
-                        if verbose {
-                            eprintln!("⚠️  Invalid message format from {}: {}", connection_id, buffer.trim());
-                        }
+                    } else if verbose {
+                        eprintln!(
+                            "⚠️  Invalid message format from {}: {}",
+                            connection_id,
+                            buffer.trim()
+                        );
                     }
                 }
                 Err(e) => {
                     if verbose {
                         eprintln!("📡 Read error from {}: {}", connection_id, e);
                     }
-                    
+
                     // エラーで接続が切断された場合も、関連するlauncherを削除
-                    Self::cleanup_disconnected_launcher(&connection_id, &session_manager, verbose).await;
-                    
+                    Self::cleanup_disconnected_launcher(&connection_id, &session_manager, verbose)
+                        .await;
+
                     break;
                 }
             }
@@ -259,35 +279,41 @@ impl MonitorServer {
         verbose: bool,
     ) {
         let mut manager = session_manager.write().await;
-        
+
         // まず、connection_idをlauncher_idとして直接削除を試行
         if let Some(removed_launcher) = manager.remove_launcher(connection_id) {
             if verbose {
-                println!("🗑️  Removed launcher by connection ID: {} ({})", 
-                    connection_id, 
-                    removed_launcher.project.unwrap_or_else(|| "unknown".to_string())
+                println!(
+                    "🗑️  Removed launcher by connection ID: {} ({})",
+                    connection_id,
+                    removed_launcher
+                        .project
+                        .unwrap_or_else(|| "unknown".to_string())
                 );
             }
             return;
         }
-        
+
         // 直接削除できない場合は、connection_idからlauncher_idを推測
         let launcher_ids = manager.get_launcher_ids();
         let mut launcher_ids_to_remove = Vec::new();
-        
+
         for launcher_id in launcher_ids {
             // connection_idとlauncher_idの関連付けを確認
             if launcher_id.contains(connection_id) || connection_id.contains(&launcher_id) {
                 launcher_ids_to_remove.push(launcher_id);
             }
         }
-        
+
         for launcher_id in launcher_ids_to_remove {
             if let Some(removed_launcher) = manager.remove_launcher(&launcher_id) {
                 if verbose {
-                    println!("🗑️  Removed disconnected launcher: {} ({})", 
-                        launcher_id, 
-                        removed_launcher.project.unwrap_or_else(|| "unknown".to_string())
+                    println!(
+                        "🗑️  Removed disconnected launcher: {} ({})",
+                        launcher_id,
+                        removed_launcher
+                            .project
+                            .unwrap_or_else(|| "unknown".to_string())
                     );
                 }
             }
@@ -301,12 +327,12 @@ impl MonitorServer {
 
         let cleanup_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // 5分間隔
-            
+
             loop {
                 interval.tick().await;
-                
+
                 session_manager.write().await.cleanup_old_sessions();
-                
+
                 if verbose {
                     println!("🧹 Cleanup completed");
                 }
@@ -320,10 +346,6 @@ impl MonitorServer {
     pub fn subscribe_ui_updates(&self) -> broadcast::Receiver<()> {
         self.ui_update_sender.subscribe()
     }
-
-
-    /// ログファイル設定をlauncherに送信
-    // ログファイル設定送信は削除 - launcherが起動時引数で処理する
 
     /// セッションマネージャー取得
     pub fn get_session_manager(&self) -> Arc<RwLock<SessionManager>> {

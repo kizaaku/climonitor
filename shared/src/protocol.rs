@@ -15,7 +15,7 @@ impl SessionStatus {
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Busy => "🟢",
-            Self::WaitingInput => "🟡", 
+            Self::WaitingInput => "🟡",
             Self::Idle => "🔵",
             Self::Error => "🔴",
         }
@@ -29,7 +29,6 @@ impl SessionStatus {
             Self::Error => "エラー",
         }
     }
-    
 }
 
 /// launcher → monitor へのメッセージ
@@ -39,7 +38,7 @@ pub enum LauncherToMonitor {
     Connect {
         launcher_id: String,
         project: Option<String>,
-        tool_type: String, // "Claude" or "Gemini"
+        tool_type: String,        // "Claude" or "Gemini"
         claude_args: Vec<String>, // 互換性のため保持（将来はtool_argsに変更予定）
         working_dir: PathBuf,
         timestamp: DateTime<Utc>,
@@ -50,6 +49,7 @@ pub enum LauncherToMonitor {
         session_id: String,
         status: SessionStatus,
         ui_execution_context: Option<String>, // UI box上の実行コンテキスト
+        ui_above_text: Option<String>,        // UI box上の⏺文字以降の具体的なテキスト
         timestamp: DateTime<Utc>,
     },
     /// プロセス監視情報
@@ -64,7 +64,7 @@ pub enum LauncherToMonitor {
     /// 出力キャプチャ
     OutputCapture {
         launcher_id: String,
-        stream: String,  // "stdout" or "stderr"
+        stream: String, // "stdout" or "stderr"
         content: String,
         timestamp: DateTime<Utc>,
     },
@@ -85,9 +85,7 @@ pub enum MonitorToLauncher {
     /// シャットダウン指示
     Shutdown,
     /// ログファイル設定
-    SetLogFile {
-        log_file_path: Option<PathBuf>,
-    },
+    SetLogFile { log_file_path: Option<PathBuf> },
 }
 
 /// launcher情報
@@ -95,7 +93,7 @@ pub enum MonitorToLauncher {
 pub struct LauncherInfo {
     pub id: String,
     pub project: Option<String>,
-    pub tool_type: String, // "Claude" or "Gemini"
+    pub tool_type: String,        // "Claude" or "Gemini"
     pub claude_args: Vec<String>, // 互換性のため保持
     pub working_dir: PathBuf,
     pub connected_at: DateTime<Utc>,
@@ -129,6 +127,7 @@ pub struct SessionInfo {
     pub usage_reset_time: Option<String>,
     pub is_waiting_for_execution: bool,
     pub ui_execution_context: Option<String>, // UI box上の実行状況（数文字の表示用）
+    pub ui_above_text: Option<String>,        // UI box上の⏺文字以降の具体的なテキスト
 }
 
 /// プロセス監視データ
@@ -151,4 +150,3 @@ pub fn generate_connection_id() -> String {
         .as_millis();
     format!("launcher-{:x}", timestamp)
 }
-
