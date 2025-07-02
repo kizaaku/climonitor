@@ -5,6 +5,5 @@ pub mod launcher_client;
 pub mod screen_buffer;
 pub mod screen_claude_detector;
 pub mod screen_gemini_detector;
-pub mod session_state;
 pub mod state_detector;
 pub mod tool_wrapper;

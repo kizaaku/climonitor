@@ -3,18 +3,26 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// セッション状態（ccmanager風のシンプルな4状態）
+/// セッション状態
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SessionStatus {
+    Connected,    // 🔗 接続済み
     Busy,         // 🟢 実行中
     WaitingInput, // 🟡 確認待ち
     Idle,         // 🔵 完了/アイドル
     Error,        // 🔴 エラー
 }
 
+impl std::fmt::Display for SessionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.icon(), self.label())
+    }
+}
+
 impl SessionStatus {
     pub fn icon(&self) -> &'static str {
         match self {
+            Self::Connected => "🔗",
             Self::Busy => "🟢",
             Self::WaitingInput => "🟡",
             Self::Idle => "🔵",
@@ -24,6 +32,7 @@ impl SessionStatus {
 
     pub fn label(&self) -> &'static str {
         match self {
+            Self::Connected => "接続済み",
             Self::Busy => "実行中",
             Self::WaitingInput => "確認待ち",
             Self::Idle => "完了",

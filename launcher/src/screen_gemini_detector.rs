@@ -1,7 +1,6 @@
 // screen_gemini_detector.rs - Screen buffer based Gemini state detector
 
 use crate::screen_buffer::ScreenBuffer;
-use crate::session_state::SessionState;
 use crate::state_detector::StateDetector;
 use climonitor_shared::SessionStatus;
 use std::time::Instant;
@@ -9,7 +8,7 @@ use std::time::Instant;
 /// スクリーンバッファベースのGemini状態検出器
 pub struct ScreenGeminiStateDetector {
     screen_buffer: ScreenBuffer,
-    current_state: SessionState,
+    current_state: SessionStatus,
     last_state_change: Option<Instant>,
     verbose: bool,
 }
@@ -30,14 +29,14 @@ impl ScreenGeminiStateDetector {
 
         Self {
             screen_buffer,
-            current_state: SessionState::Connected,
+            current_state: SessionStatus::Connected,
             last_state_change: None,
             verbose,
         }
     }
 
     /// 画面内容から状態パターンをチェック
-    fn check_screen_patterns(&self, screen_lines: &[String]) -> Option<SessionState> {
+    fn check_screen_patterns(&self, screen_lines: &[String]) -> Option<SessionStatus> {
         for line in screen_lines {
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -51,7 +50,7 @@ impl ScreenGeminiStateDetector {
                         "⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}"
                     );
                 }
-                return Some(SessionState::WaitingForInput);
+                return Some(SessionStatus::WaitingInput);
             }
 
             // 実行中状態
@@ -59,14 +58,14 @@ impl ScreenGeminiStateDetector {
                 if self.verbose {
                     eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
                 }
-                return Some(SessionState::Busy);
+                return Some(SessionStatus::Busy);
             }
         }
         None
     }
 
     /// Gemini固有の状態検出: スピナーとUI boxの組み合わせで判定
-    fn detect_gemini_state(&mut self) -> Option<SessionState> {
+    fn detect_gemini_state(&mut self) -> Option<SessionStatus> {
         let screen_lines = self.screen_buffer.get_screen_lines();
         let ui_boxes = self.screen_buffer.find_ui_boxes();
 
@@ -82,7 +81,7 @@ impl ScreenGeminiStateDetector {
                         if self.verbose {
                             eprintln!("✅ [GEMINI_READY] Command prompt ready: {trimmed}");
                         }
-                        return Some(SessionState::Idle);
+                        return Some(SessionStatus::Idle);
                     }
                 }
 
@@ -95,7 +94,7 @@ impl ScreenGeminiStateDetector {
                 if self.verbose {
                     eprintln!("🔵 [GEMINI_IDLE] UI box present but no active operations");
                 }
-                return Some(SessionState::Idle);
+                return Some(SessionStatus::Idle);
             }
         }
 
@@ -121,7 +120,7 @@ impl ScreenGeminiStateDetector {
 }
 
 impl StateDetector for ScreenGeminiStateDetector {
-    fn process_output(&mut self, output: &str) -> Option<SessionState> {
+    fn process_output(&mut self, output: &str) -> Option<SessionStatus> {
         // 基本的なスクリーンバッファ処理
         let bytes = output.as_bytes();
         self.screen_buffer.process_data(bytes);
@@ -150,13 +149,10 @@ impl StateDetector for ScreenGeminiStateDetector {
         None
     }
 
-    fn current_state(&self) -> &SessionState {
+    fn current_state(&self) -> &SessionStatus {
         &self.current_state
     }
 
-    fn to_session_status(&self) -> SessionStatus {
-        self.current_state.to_session_status()
-    }
 
     fn debug_buffer(&self) {
         let lines = self.screen_buffer.get_screen_lines();

@@ -588,8 +588,7 @@ impl LauncherClient {
                     }
 
                     // 状態検出とモニター通知
-                    if let Some(_new_state) = state_detector.process_output(&output_str) {
-                        let new_status = state_detector.to_session_status();
+                    if let Some(new_status) = state_detector.process_output(&output_str) {
                         if new_status != last_status {
                             if verbose {
                                 eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?}");
