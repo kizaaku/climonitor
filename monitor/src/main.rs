@@ -1,24 +1,19 @@
 use clap::Parser;
 
-use climonitor_monitor::live_ui::{print_snapshot, LiveUI};
+use climonitor_monitor::live_ui::LiveUI;
 use climonitor_monitor::monitor_server::MonitorServer;
-use climonitor_monitor::session_manager::SessionManager;
 
 #[derive(Parser)]
 #[command(name = "climonitor")]
-#[command(about = "Monitor Claude session status in real-time")]
+#[command(about = "Monitor CLI tool session status in real-time")]
 struct Cli {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
 
-    /// Live mode - connect to climonitor-launcher for real-time updates
+    /// Live mode - start monitor server for real-time updates (default behavior)
     #[arg(long)]
     live: bool,
-
-    /// Non-interactive mode (print status and exit)
-    #[arg(long)]
-    no_tui: bool,
 
     /// Log file path to save Claude's standard output
     #[arg(long)]
@@ -32,12 +27,8 @@ async fn main() -> anyhow::Result<()> {
     if cli.live {
         // ライブモード：Monitor サーバーとして動作
         run_live_mode(cli.verbose, cli.log_file).await?;
-    } else if cli.no_tui {
-        // 非対話モード：一度だけ状態表示
-        run_snapshot_mode(cli.verbose).await?;
     } else {
         // デフォルト：ライブモード
-        println!("💡 Starting in live mode. Use --no-tui for snapshot mode.");
         run_live_mode(cli.verbose, cli.log_file).await?;
     }
 
@@ -97,49 +88,4 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
     }
 
     Ok(())
-}
-
-/// スナップショットモード実行
-async fn run_snapshot_mode(verbose: bool) -> anyhow::Result<()> {
-    if verbose {
-        println!("📸 Running in snapshot mode...");
-    }
-
-    // Monitor サーバーに接続を試行
-    match try_connect_to_monitor().await {
-        Ok(session_manager) => {
-            // 接続成功：現在の状態を表示
-            print_snapshot(session_manager, verbose).await;
-        }
-        Err(_) => {
-            // 接続失敗：Monitor が起動していない
-            println!("📊 Claude Session Monitor - Snapshot");
-            println!("{}", "═".repeat(50));
-            println!("⚠️  Monitor server not running");
-            println!("💡 Start the monitor server with:");
-            println!("   climonitor --live");
-            println!();
-            println!("💡 Then start launchers with:");
-            println!("   climonitor-launcher claude");
-        }
-    }
-
-    Ok(())
-}
-
-/// Monitor サーバーへの接続試行
-async fn try_connect_to_monitor(
-) -> anyhow::Result<std::sync::Arc<tokio::sync::RwLock<SessionManager>>> {
-    use tokio::net::UnixStream;
-    use tokio::time::{timeout, Duration};
-
-    let socket_path = MonitorServer::get_client_socket_path()?;
-
-    // 接続タイムアウト: 2秒
-    let _stream = timeout(Duration::from_secs(2), UnixStream::connect(socket_path)).await??;
-
-    // TODO: 実際のセッション情報取得
-    // 現在は空のSessionManagerを返す（デモ用）
-    let session_manager = std::sync::Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
-    Ok(session_manager)
 }

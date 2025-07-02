@@ -122,7 +122,6 @@ impl StateDetector for ScreenClaudeStateDetector {
         &self.current_state
     }
 
-
     fn debug_buffer(&self) {
         // デバッグ用に画面内容を表示
         let lines = self.screen_buffer.get_screen_lines();

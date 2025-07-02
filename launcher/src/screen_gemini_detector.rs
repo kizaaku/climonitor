@@ -153,7 +153,6 @@ impl StateDetector for ScreenGeminiStateDetector {
         &self.current_state
     }
 
-
     fn debug_buffer(&self) {
         let lines = self.screen_buffer.get_screen_lines();
         for (i, line) in lines.iter().enumerate() {
