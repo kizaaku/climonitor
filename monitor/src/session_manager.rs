@@ -1,6 +1,6 @@
 use chrono::Utc;
 use climonitor_shared::{
-    LauncherInfo, LauncherStatus, LauncherToMonitor, ProcessMetrics, SessionInfo, SessionStatus,
+    CliToolType, LauncherInfo, LauncherStatus, LauncherToMonitor, ProcessMetrics, SessionInfo, SessionStatus,
 };
 use std::collections::HashMap;
 
@@ -272,7 +272,7 @@ mod tests {
         let launcher = LauncherInfo {
             id: generate_connection_id(),
             project: Some("test".to_string()),
-            tool_type: "Claude".to_string(),
+            tool_type: CliToolType::Claude,
             claude_args: vec!["--help".to_string()],
             working_dir: "/tmp".into(),
             connected_at: Utc::now(),
