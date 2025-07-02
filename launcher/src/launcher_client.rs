@@ -169,10 +169,7 @@ impl LauncherClient {
             let connect_msg = LauncherToMonitor::Connect {
                 launcher_id: self.launcher_id.clone(),
                 project: self.project_name.clone(),
-                tool_type: match self.tool_wrapper.get_tool_type() {
-                    crate::cli_tool::CliToolType::Claude => "claude".to_string(),
-                    crate::cli_tool::CliToolType::Gemini => "gemini".to_string(),
-                },
+                tool_type: self.tool_wrapper.get_tool_type(),
                 claude_args: self.tool_wrapper.get_args().to_vec(),
                 working_dir: self
                     .tool_wrapper
@@ -727,8 +724,8 @@ impl LauncherClient {
                 // 最初にConnect互換メッセージを送信して確実にlauncherを登録
                 let connect_msg = LauncherToMonitor::Connect {
                     launcher_id: launcher_id.to_string(),
-                    session_id: session_id.to_string(),
                     tool_type: crate::cli_tool::CliToolType::Claude, // TODO: 実際のツールタイプ
+                    claude_args: vec![], // 空のargs
                     project: Some("unknown".to_string()), // TODO: 実際のプロジェクト名
                     working_dir: std::env::current_dir().unwrap_or_default(),
                     timestamp: Utc::now(),

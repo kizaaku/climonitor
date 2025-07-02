@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use crate::cli_tool::CliToolType;
 
 /// セッション状態（ccmanager風のシンプルな4状態）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,7 +39,7 @@ pub enum LauncherToMonitor {
     Connect {
         launcher_id: String,
         project: Option<String>,
-        tool_type: String,        // "Claude" or "Gemini"
+        tool_type: CliToolType,
         claude_args: Vec<String>, // 互換性のため保持（将来はtool_argsに変更予定）
         working_dir: PathBuf,
         timestamp: DateTime<Utc>,
@@ -92,7 +93,7 @@ pub enum MonitorToLauncher {
 pub struct LauncherInfo {
     pub id: String,
     pub project: Option<String>,
-    pub tool_type: String,        // "Claude" or "Gemini"
+    pub tool_type: CliToolType,
     pub claude_args: Vec<String>, // 互換性のため保持
     pub working_dir: PathBuf,
     pub connected_at: DateTime<Utc>,
@@ -115,7 +116,7 @@ pub struct SessionInfo {
     pub id: String,
     pub launcher_id: String,
     pub project: Option<String>,
-    pub tool_type: Option<String>, // "Claude" or "Gemini"
+    pub tool_type: Option<CliToolType>,
     pub status: SessionStatus,
     pub confidence: f32,
     pub evidence: Vec<String>,

@@ -148,10 +148,9 @@ impl LiveUI {
 
                 // Show tool type
                 let tool_type_display = if let Some(ref tool_type) = session.tool_type {
-                    match tool_type.as_str() {
-                        "claude" => " 🤖",
-                        "gemini" => " ✨",
-                        _ => " 🔧",
+                    match tool_type {
+                        climonitor_shared::CliToolType::Claude => " 🤖",
+                        climonitor_shared::CliToolType::Gemini => " ✨",
                     }
                 } else {
                     ""
