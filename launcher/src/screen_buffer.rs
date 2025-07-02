@@ -216,7 +216,7 @@ impl ScreenBuffer {
             }
         }
 
-        boxes.sort_by(|a, b| b.start_row.cmp(&a.start_row));
+        boxes.sort_by(|a, b| a.start_row.cmp(&b.start_row));
         boxes
     }
 

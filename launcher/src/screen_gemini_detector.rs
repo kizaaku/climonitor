@@ -36,6 +36,33 @@ impl ScreenGeminiStateDetector {
         }
     }
 
+    /// 画面内容から状態パターンをチェック
+    fn check_screen_patterns(&self, screen_lines: &[String]) -> Option<SessionState> {
+        for line in screen_lines {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // 入力待ち状態（最優先）
+            if line.contains("Waiting for user confirmation") {
+                if self.verbose {
+                    eprintln!("⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {}", trimmed);
+                }
+                return Some(SessionState::WaitingForInput);
+            }
+
+            // 実行中状態
+            if line.contains("(esc to cancel") {
+                if self.verbose {
+                    eprintln!("⚡ [GEMINI_BUSY] Processing detected: {}", trimmed);
+                }
+                return Some(SessionState::Busy);
+            }
+        }
+        None
+    }
+
     /// Gemini固有の状態検出: スピナーとUI boxの組み合わせで判定
     fn detect_gemini_state(&mut self) -> Option<SessionState> {
         let screen_lines = self.screen_buffer.get_screen_lines();
@@ -55,35 +82,11 @@ impl ScreenGeminiStateDetector {
                         }
                         return Some(SessionState::Idle);
                     }
-
-                    // 入力待ち状態の検出
-                    if content_line.contains("Allow execution?") {
-                        if self.verbose {
-                            eprintln!("⏳ [GEMINI_INPUT] Waiting for input: {trimmed}");
-                        }
-                        return Some(SessionState::WaitingForInput);
-                    }
                 }
 
-                // UI box下の行での状態検出
-                for below_line in &latest_box.below_lines {
-                    if below_line.contains("◯ IDE connected") {
-                        if self.verbose {
-                            eprintln!("💻 [GEMINI_IDE] IDE connected detected");
-                        }
-                        return Some(SessionState::Idle);
-                    }
-
-                    // Gemini確認待ち状態の検出
-                    if below_line.contains("Waiting for user confirmation") {
-                        if self.verbose {
-                            eprintln!(
-                                "⏳ [GEMINI_CONFIRMATION] Waiting for user confirmation: {}",
-                                below_line.trim()
-                            );
-                        }
-                        return Some(SessionState::WaitingForInput);
-                    }
+                // 全てのscreen_linesから状態パターンをチェック
+                if let Some(state) = self.check_screen_patterns(&screen_lines) {
+                    return Some(state);
                 }
 
                 // UI boxがあるがアクティブな操作が検出されない場合はIdle
@@ -94,36 +97,20 @@ impl ScreenGeminiStateDetector {
             }
         }
 
-        // UI boxがない場合：Gemini特有のスピナーパターンを検出
-        for line in &screen_lines {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                // Gemini処理中パターンの検出
-                if trimmed.contains("(esc to cancel") {
-                    if self.verbose {
-                        eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
-                    }
-                    return Some(SessionState::Busy);
-                }
-
-                // エラーパターンの検出
-                if trimmed.contains("✗") || trimmed.contains("failed") || trimmed.contains("Error")
-                {
-                    if self.verbose {
-                        eprintln!("🔴 [GEMINI_ERROR] Error detected: {trimmed}");
-                    }
-                    return Some(SessionState::Error);
-                }
-            }
+        // UI boxがない場合も同じパターンチェックを使用
+        if let Some(state) = self.check_screen_patterns(&screen_lines) {
+            return Some(state);
         }
 
-        // 統計情報ボックスが表示されている場合はIdle（セッション終了後）
-        for line in &screen_lines {
-            if line.contains("Cumulative Stats") || line.contains("Input Tokens") {
-                if self.verbose {
-                    eprintln!("📊 [GEMINI_STATS] Stats displayed, session idle");
+
+        // デバッグ: 検知されない場合の画面内容を確認
+        if self.verbose {
+            eprintln!("🤔 [GEMINI_DEBUG] No state detected. Screen content:");
+            for (i, line) in screen_lines.iter().enumerate() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    eprintln!("  {i:2}: '{trimmed}'");
                 }
-                return Some(SessionState::Idle);
             }
         }
 
