@@ -17,8 +17,6 @@ pub trait StateDetector: Send + Sync {
     /// デバッグ用：現在のバッファを表示
     fn debug_buffer(&self);
 
-    /// UI実行コンテキストを取得（数文字表示用）
-    fn get_ui_execution_context(&self) -> Option<String>;
 
     /// UI box上の⏺文字以降のテキストを取得
     fn get_ui_above_text(&self) -> Option<String>;

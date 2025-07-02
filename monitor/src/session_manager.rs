@@ -103,7 +103,6 @@ impl SessionManager {
                 launcher_id,
                 session_id,
                 status,
-                ui_execution_context,
                 ui_above_text,
                 timestamp,
             } => {
@@ -126,7 +125,6 @@ impl SessionManager {
                     launcher_context: None,          // 簡易実装では空
                     usage_reset_time: None,          // 簡易実装では空
                     is_waiting_for_execution: false, // 簡易実装では固定値
-                    ui_execution_context,
                     ui_above_text,
                     created_at: self
                         .sessions

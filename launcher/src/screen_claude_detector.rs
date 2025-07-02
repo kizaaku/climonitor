@@ -138,16 +138,6 @@ impl StateDetector for ScreenClaudeStateDetector {
         }
     }
 
-    fn get_ui_execution_context(&self) -> Option<String> {
-        // 簡単な実装：'esc to interrupt'があれば実行中
-        let screen_lines = self.screen_buffer.get_screen_lines();
-        for line in &screen_lines {
-            if line.contains("esc to interrupt") {
-                return Some("実行中".to_string());
-            }
-        }
-        None
-    }
 
     fn get_ui_above_text(&self) -> Option<String> {
         // UI box上のテキストを取得（基本実装）

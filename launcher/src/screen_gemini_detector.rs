@@ -168,15 +168,6 @@ impl StateDetector for ScreenGeminiStateDetector {
         }
     }
 
-    fn get_ui_execution_context(&self) -> Option<String> {
-        let screen_lines = self.screen_buffer.get_screen_lines();
-        for line in &screen_lines {
-            if line.contains("(esc to cancel") {
-                return Some("処理中".to_string());
-            }
-        }
-        None
-    }
 
     fn get_ui_above_text(&self) -> Option<String> {
         let ui_boxes = self.screen_buffer.find_ui_boxes();

@@ -254,7 +254,6 @@ impl LauncherClient {
                 launcher_id: self.launcher_id.clone(),
                 session_id: self.session_id.clone(),
                 status: SessionStatus::Idle,
-                ui_execution_context: None,
                 ui_above_text: None,
                 timestamp: Utc::now(),
             };
@@ -718,7 +717,6 @@ impl LauncherClient {
                     launcher_id: launcher_id.to_string(),
                     session_id: session_id.to_string(),
                     status: status.clone(),
-                    ui_execution_context: detector.get_ui_execution_context(),
                     ui_above_text: detector.get_ui_above_text(),
                     timestamp: Utc::now(),
                 };

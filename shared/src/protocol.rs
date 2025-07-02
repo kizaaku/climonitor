@@ -48,7 +48,6 @@ pub enum LauncherToMonitor {
         launcher_id: String,
         session_id: String,
         status: SessionStatus,
-        ui_execution_context: Option<String>, // UI box上の実行コンテキスト
         ui_above_text: Option<String>,        // UI box上の⏺文字以降の具体的なテキスト
         timestamp: DateTime<Utc>,
     },
@@ -126,7 +125,6 @@ pub struct SessionInfo {
     pub launcher_context: Option<String>,
     pub usage_reset_time: Option<String>,
     pub is_waiting_for_execution: bool,
-    pub ui_execution_context: Option<String>, // UI box上の実行状況（数文字の表示用）
     pub ui_above_text: Option<String>,        // UI box上の⏺文字以降の具体的なテキスト
 }
 
