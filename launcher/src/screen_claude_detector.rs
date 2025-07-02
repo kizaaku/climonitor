@@ -138,7 +138,6 @@ impl StateDetector for ScreenClaudeStateDetector {
         }
     }
 
-
     fn get_ui_above_text(&self) -> Option<String> {
         // UI box上のテキストを取得（基本実装）
         let ui_boxes = self.screen_buffer.find_ui_boxes();

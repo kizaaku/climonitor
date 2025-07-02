@@ -168,7 +168,6 @@ impl StateDetector for ScreenGeminiStateDetector {
         }
     }
 
-
     fn get_ui_above_text(&self) -> Option<String> {
         let ui_boxes = self.screen_buffer.find_ui_boxes();
         if let Some(latest_box) = ui_boxes.last() {

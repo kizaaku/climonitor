@@ -1,5 +1,5 @@
-pub mod protocol;
 pub mod cli_tool;
+pub mod protocol;
 
-pub use protocol::*;
 pub use cli_tool::*;
+pub use protocol::*;

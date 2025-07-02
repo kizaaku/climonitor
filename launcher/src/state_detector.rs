@@ -17,7 +17,6 @@ pub trait StateDetector: Send + Sync {
     /// デバッグ用：現在のバッファを表示
     fn debug_buffer(&self);
 
-
     /// UI box上の⏺文字以降のテキストを取得
     fn get_ui_above_text(&self) -> Option<String>;
 

@@ -603,7 +603,8 @@ impl LauncherClient {
                                 new_status,
                                 &*state_detector,
                                 verbose,
-                            ).await;
+                            )
+                            .await;
                         }
                     }
 
@@ -725,8 +726,8 @@ impl LauncherClient {
                 let connect_msg = LauncherToMonitor::Connect {
                     launcher_id: launcher_id.to_string(),
                     tool_type: crate::cli_tool::CliToolType::Claude, // TODO: 実際のツールタイプ
-                    claude_args: vec![], // 空のargs
-                    project: Some("unknown".to_string()), // TODO: 実際のプロジェクト名
+                    claude_args: vec![],                             // 空のargs
+                    project: Some("unknown".to_string()),            // TODO: 実際のプロジェクト名
                     working_dir: std::env::current_dir().unwrap_or_default(),
                     timestamp: Utc::now(),
                 };

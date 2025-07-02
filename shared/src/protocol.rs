@@ -1,7 +1,7 @@
+use crate::cli_tool::CliToolType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::cli_tool::CliToolType;
 
 /// セッション状態（ccmanager風のシンプルな4状態）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,7 +49,7 @@ pub enum LauncherToMonitor {
         launcher_id: String,
         session_id: String,
         status: SessionStatus,
-        ui_above_text: Option<String>,        // UI box上の⏺文字以降の具体的なテキスト
+        ui_above_text: Option<String>, // UI box上の⏺文字以降の具体的なテキスト
         timestamp: DateTime<Utc>,
     },
     /// プロセス監視情報
@@ -126,7 +126,7 @@ pub struct SessionInfo {
     pub launcher_context: Option<String>,
     pub usage_reset_time: Option<String>,
     pub is_waiting_for_execution: bool,
-    pub ui_above_text: Option<String>,        // UI box上の⏺文字以降の具体的なテキスト
+    pub ui_above_text: Option<String>, // UI box上の⏺文字以降の具体的なテキスト
 }
 
 /// プロセス監視データ
