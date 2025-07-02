@@ -47,7 +47,9 @@ impl ScreenGeminiStateDetector {
             // 入力待ち状態（最優先）
             if line.contains("Waiting for user confirmation") {
                 if self.verbose {
-                    eprintln!("⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {}", trimmed);
+                    eprintln!(
+                        "⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}"
+                    );
                 }
                 return Some(SessionState::WaitingForInput);
             }
@@ -55,7 +57,7 @@ impl ScreenGeminiStateDetector {
             // 実行中状態
             if line.contains("(esc to cancel") {
                 if self.verbose {
-                    eprintln!("⚡ [GEMINI_BUSY] Processing detected: {}", trimmed);
+                    eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
                 }
                 return Some(SessionState::Busy);
             }
@@ -101,7 +103,6 @@ impl ScreenGeminiStateDetector {
         if let Some(state) = self.check_screen_patterns(&screen_lines) {
             return Some(state);
         }
-
 
         // デバッグ: 検知されない場合の画面内容を確認
         if self.verbose {
