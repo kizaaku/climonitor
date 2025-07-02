@@ -249,20 +249,7 @@ impl LauncherClient {
         }
 
         // 初期状態メッセージを送信（detector無しなのでNoneで）
-        if let Some(ref mut stream) = self.socket_stream {
-            let update_msg = LauncherToMonitor::StateUpdate {
-                launcher_id: self.launcher_id.clone(),
-                session_id: self.session_id.clone(),
-                status: SessionStatus::Idle,
-                ui_above_text: None,
-                timestamp: Utc::now(),
-            };
-
-            if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
-                let _ = stream.write_all(&msg_bytes).await;
-                let _ = stream.write_all(b"\n").await;
-            }
-        }
+        self.send_state_update(SessionStatus::Idle, None).await?;
 
         // ターミナルガードはmain関数で作成済み（ここでは作らない）
         let terminal_guard = DummyTerminalGuard {
@@ -612,15 +599,14 @@ impl LauncherClient {
                             }
                             last_status = new_status.clone();
 
-                            // モニターサーバーに状態更新を送信（ベストエフォート）
-                            Self::send_status_update_async(
+                            // 永続接続での状態更新（改善版）
+                            Self::send_status_update_persistent(
                                 &launcher_id,
                                 &session_id,
                                 new_status,
                                 &*state_detector,
                                 verbose,
-                            )
-                            .await;
+                            ).await;
                         }
                     }
 
@@ -695,15 +681,39 @@ impl LauncherClient {
         }
     }
 
-    /// 非同期でステータス更新をモニターサーバーに送信（フォールバック用）
-    async fn send_status_update_async(
+    /// 永続接続を使用して状態更新を送信
+    async fn send_state_update(
+        &mut self,
+        status: SessionStatus,
+        ui_above_text: Option<String>,
+    ) -> Result<()> {
+        let update_msg = LauncherToMonitor::StateUpdate {
+            launcher_id: self.launcher_id.clone(),
+            session_id: self.session_id.clone(),
+            status,
+            ui_above_text,
+            timestamp: Utc::now(),
+        };
+
+        if let Some(ref mut stream) = self.socket_stream {
+            let msg_bytes = serde_json::to_vec(&update_msg)?;
+            stream.write_all(&msg_bytes).await?;
+            stream.write_all(b"\n").await?;
+            stream.flush().await?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No active connection to monitor server"))
+        }
+    }
+
+    /// 状態更新送信（短命接続だが安定性重視）
+    async fn send_status_update_persistent(
         launcher_id: &str,
         session_id: &str,
         status: SessionStatus,
         detector: &dyn StateDetector,
         verbose: bool,
     ) {
-        // 新しい接続でステータス更新を送信（ベストエフォート）
         let socket_path = std::env::var("CLIMONITOR_SOCKET_PATH").unwrap_or_else(|_| {
             std::env::temp_dir()
                 .join("climonitor.sock")
@@ -711,8 +721,26 @@ impl LauncherClient {
                 .to_string()
         });
 
+        // 接続を確立してからメッセージを送信
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
+                // 最初にConnect互換メッセージを送信して確実にlauncherを登録
+                let connect_msg = LauncherToMonitor::Connect {
+                    launcher_id: launcher_id.to_string(),
+                    session_id: session_id.to_string(),
+                    tool_type: crate::cli_tool::CliToolType::Claude, // TODO: 実際のツールタイプ
+                    project: Some("unknown".to_string()), // TODO: 実際のプロジェクト名
+                    working_dir: std::env::current_dir().unwrap_or_default(),
+                    timestamp: Utc::now(),
+                };
+
+                // Connectメッセージを送信
+                if let Ok(connect_bytes) = serde_json::to_vec(&connect_msg) {
+                    let _ = stream.write_all(&connect_bytes).await;
+                    let _ = stream.write_all(b"\n").await;
+                }
+
+                // 状態更新メッセージを送信
                 let update_msg = LauncherToMonitor::StateUpdate {
                     launcher_id: launcher_id.to_string(),
                     session_id: session_id.to_string(),
@@ -727,12 +755,11 @@ impl LauncherClient {
                     let _ = stream.flush().await;
 
                     if verbose {
-                        eprintln!("📤 Sent fallback status update: {status:?}");
+                        eprintln!("📤 Sent status update with launcher registration: {status:?}");
                     }
                 }
             }
             Err(_) => {
-                // 接続失敗は無視（ベストエフォート）
                 if verbose {
                     eprintln!("⚠️  Failed to send status update (monitor not available)");
                 }
