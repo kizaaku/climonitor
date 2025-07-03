@@ -158,11 +158,16 @@ impl StateDetector for ScreenGeminiStateDetector {
     }
 
     fn get_ui_above_text(&self) -> Option<String> {
-        let ui_boxes = self.screen_buffer.find_ui_boxes();
-        if let Some(latest_box) = ui_boxes.last() {
-            for line in &latest_box.above_lines {
-                if line.contains("⏺") {
-                    return Some(line.trim().to_string());
+        // Gemini固有: 行頭✦の右側のテキストを取得（最新=一番下のもの）
+        let screen_lines = self.screen_buffer.get_screen_lines();
+
+        // 画面全体から行頭✦マーカーを探す（逆順で最新のものを取得）
+        for line in screen_lines.iter().rev() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('✦') {
+                let right_text = trimmed['✦'.len_utf8()..].trim();
+                if !right_text.is_empty() {
+                    return Some(right_text.to_string());
                 }
             }
         }
