@@ -45,13 +45,8 @@ impl SessionManager {
         // 関連プロセス情報削除
         self.process_metrics.remove(launcher_id);
 
-        // 関連セッションの状態更新（切断状態に）
-        for session in self.sessions.values_mut() {
-            if session.launcher_id == launcher_id {
-                session.status = SessionStatus::Idle;
-                session.last_activity = Utc::now();
-            }
-        }
+        // 関連セッションを完全削除
+        self.sessions.retain(|_, session| session.launcher_id != launcher_id);
 
         launcher
     }

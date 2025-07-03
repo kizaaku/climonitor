@@ -38,84 +38,80 @@ impl ScreenGeminiStateDetector {
     /// 画面内容から状態パターンをチェック
     fn check_screen_patterns(&self, screen_lines: &[String]) -> Option<SessionStatus> {
         for line in screen_lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            // 入力待ち状態（最優先）
-            if line.contains("Waiting for user confirmation") {
-                if self.verbose {
-                    eprintln!(
-                        "⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}"
-                    );
-                }
-                return Some(SessionStatus::WaitingInput);
-            }
-
-            // 実行中状態
-            if line.contains("(esc to cancel") {
-                if self.verbose {
-                    eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
-                }
-                return Some(SessionStatus::Busy);
+            if let Some(state) = self.check_single_line_patterns(line) {
+                return Some(state);
             }
         }
         None
     }
 
-    /// Gemini固有の状態検出: スピナーとUI boxの組み合わせで判定
+    /// 単一行のパターンチェック
+    fn check_single_line_patterns(&self, line: &str) -> Option<SessionStatus> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        // 入力待ち状態（最優先）
+        if line.contains("Waiting for user confirmation") {
+            if self.verbose {
+                eprintln!(
+                    "⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}"
+                );
+            }
+            return Some(SessionStatus::WaitingInput);
+        }
+
+        // 実行中状態
+        if line.contains("(esc to cancel") {
+            if self.verbose {
+                eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
+            }
+            return Some(SessionStatus::Busy);
+        }
+
+        None
+    }
+
+    /// Gemini固有の状態検出: シンプルなパターンマッチング
     fn detect_gemini_state(&mut self) -> Option<SessionStatus> {
         let screen_lines = self.screen_buffer.get_screen_lines();
         let ui_boxes = self.screen_buffer.find_ui_boxes();
 
-        // UI boxがある場合は通常の検出ロジック（入力待ち状態など）
-        if !ui_boxes.is_empty() {
-            if let Some(latest_box) = ui_boxes.last() {
-                // UI box内容での状態検出
-                for content_line in &latest_box.content_lines {
-                    let trimmed = content_line.trim();
-
-                    // > から始まる行は完了状態（コマンド入力待ち）
-                    if trimmed.starts_with('>') {
-                        if self.verbose {
-                            eprintln!("✅ [GEMINI_READY] Command prompt ready: {trimmed}");
-                        }
-                        return Some(SessionStatus::Idle);
-                    }
-                }
-
-                // 全てのscreen_linesから状態パターンをチェック
-                if let Some(state) = self.check_screen_patterns(&screen_lines) {
-                    return Some(state);
-                }
-
-                // UI boxがあるがアクティブな操作が検出されない場合はIdle
-                if self.verbose {
-                    eprintln!("🔵 [GEMINI_IDLE] UI box present but no active operations");
-                }
-                return Some(SessionStatus::Idle);
-            }
-        }
-
-        // UI boxがない場合も同じパターンチェックを使用
+        // 全ての画面内容から状態パターンをチェック
         if let Some(state) = self.check_screen_patterns(&screen_lines) {
             return Some(state);
         }
 
-        // デバッグ: 検知されない場合の画面内容を確認
-        if self.verbose {
-            eprintln!("🤔 [GEMINI_DEBUG] No state detected. Screen content:");
-            for (i, line) in screen_lines.iter().enumerate() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    eprintln!("  {i:2}: '{trimmed}'");
+        // UI boxがある場合は、各UI boxとその上下の行をチェック
+        if !ui_boxes.is_empty() {
+            for ui_box in &ui_boxes {
+                // UI boxの上下の行をチェック
+                for line in &ui_box.above_lines {
+                    if let Some(state) = self.check_single_line_patterns(line) {
+                        return Some(state);
+                    }
+                }
+                
+                for line in &ui_box.below_lines {
+                    if let Some(state) = self.check_single_line_patterns(line) {
+                        return Some(state);
+                    }
                 }
             }
+
+            // 特別な状態が検出されない場合はIdle
+            if self.verbose {
+                eprintln!("🔵 [GEMINI_IDLE] No busy or waiting patterns detected");
+            }
+            return Some(SessionStatus::Idle);
         }
 
-        // 何も検出されない場合は現在の状態を維持
-        None
+        // UI boxがない場合も特別な状態が検出されない場合はIdle
+        if self.verbose {
+            eprintln!("🔵 [GEMINI_IDLE] No UI boxes, defaulting to Idle");
+        }
+        Some(SessionStatus::Idle)
     }
 }
 
