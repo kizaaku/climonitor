@@ -66,9 +66,6 @@ impl MonitorServer {
             println!("📡 Monitor server started at: {:?}", self.socket_path);
         }
 
-        // 定期クリーンアップタスク開始
-        self.start_cleanup_task().await;
-
         Ok(())
     }
 
@@ -315,28 +312,6 @@ impl MonitorServer {
                 }
             }
         }
-    }
-
-    /// 定期クリーンアップタスク開始
-    async fn start_cleanup_task(&mut self) {
-        let session_manager = Arc::clone(&self.session_manager);
-        let verbose = self.verbose;
-
-        let cleanup_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // 5分間隔
-
-            loop {
-                interval.tick().await;
-
-                session_manager.write().await.cleanup_old_sessions();
-
-                if verbose {
-                    println!("🧹 Cleanup completed");
-                }
-            }
-        });
-
-        self.task_handles.push(cleanup_handle);
     }
 
     /// UI更新通知受信用

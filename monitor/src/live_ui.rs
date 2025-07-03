@@ -120,13 +120,7 @@ impl LiveUI {
         let session_manager = self.session_manager.read().await;
         let sessions_by_project = session_manager.get_sessions_by_project();
 
-        // unknownプロジェクトを除外
-        let filtered_sessions: std::collections::HashMap<String, Vec<_>> = sessions_by_project
-            .into_iter()
-            .filter(|(project_name, _)| project_name != "unknown")
-            .collect();
-
-        if filtered_sessions.is_empty() {
+        if sessions_by_project.is_empty() {
             println!("⏳ No launcher connections");
             println!("💡 Start with: climonitor-launcher claude");
             println!();
@@ -135,7 +129,7 @@ impl LiveUI {
 
         // セッション表示開始（ヘッダーなし）
 
-        for (project_name, sessions) in filtered_sessions {
+        for (project_name, sessions) in sessions_by_project {
             println!("  📁 {project_name}:");
 
             for session in sessions {
@@ -243,23 +237,17 @@ pub async fn print_snapshot(session_manager: Arc<RwLock<SessionManager>>, verbos
     let stats = session_manager.get_stats();
     let sessions_by_project = session_manager.get_sessions_by_project();
 
-    // unknownプロジェクトを除外
-    let filtered_sessions: std::collections::HashMap<String, Vec<_>> = sessions_by_project
-        .into_iter()
-        .filter(|(project_name, _)| project_name != "unknown")
-        .collect();
-
     println!("📊 Claude Session Monitor - Snapshot");
     println!("Session: {stats}", stats = stats.total_sessions);
     println!("{}", "═".repeat(50));
 
-    if filtered_sessions.is_empty() {
+    if sessions_by_project.is_empty() {
         println!("🔍 No active sessions found");
         println!("💡 Start with: climonitor-launcher claude");
         return;
     }
 
-    for (project_name, sessions) in filtered_sessions {
+    for (project_name, sessions) in sessions_by_project {
         println!("\n📁 Project: {project_name}");
         let session_count = sessions.len();
         println!("   Sessions: {session_count}");

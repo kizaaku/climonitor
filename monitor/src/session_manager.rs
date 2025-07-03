@@ -225,31 +225,15 @@ impl SessionManager {
         projects
     }
 
-    /// 統計情報取得（unknownプロジェクトを除外）
+    /// 統計情報取得
     pub fn get_stats(&self) -> SessionStats {
-        let sessions_by_project = self.get_sessions_by_project();
-
-        // unknownプロジェクトを除外した統計
-        let filtered_sessions: Vec<&SessionInfo> = sessions_by_project
-            .iter()
-            .filter(|(project_name, _)| *project_name != "unknown")
-            .flat_map(|(_, sessions)| sessions.iter().copied())
-            .collect();
-
-        let active_sessions = filtered_sessions.len();
-        let total_sessions = active_sessions; // フィルタリング後のセッション数
+        let active_sessions = self.sessions.len();
+        let total_sessions = active_sessions;
 
         SessionStats {
             total_sessions,
             active_sessions,
         }
-    }
-
-    /// 古いセッションのクリーンアップ
-    pub fn cleanup_old_sessions(&mut self) {
-        let cutoff = Utc::now() - chrono::Duration::hours(24);
-        self.sessions
-            .retain(|_, session| session.last_activity > cutoff);
     }
 }
 
