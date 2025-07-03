@@ -2,7 +2,7 @@
 
 ## 概要
 
-climonitorは各CLIツール専用の状態検出器を使用して、画面出力から正確な実行状態を判定します。Complete Independence アーキテクチャにより、各検出器は完全に独立して動作します。
+climonitorは各CLIツール専用の状態検出器を使用して、PTY画面出力から正確な実行状態を判定します。独立型アーキテクチャにより、各検出器は完全に独立して動作し、ツール固有のパターンに最適化されています。
 
 ## StateDetector Trait
 
@@ -10,24 +10,33 @@ climonitorは各CLIツール専用の状態検出器を使用して、画面出�
 
 ```rust
 trait StateDetector {
-    fn process_output(&mut self, output: &str) -> Option<SessionState>;
-    fn current_state(&self) -> &SessionState;
-    fn to_session_status(&self) -> SessionStatus;
+    /// PTY出力を処理して状態変化を検出
+    fn process_output(&mut self, output: &str) -> Option<SessionStatus>;
+    
+    /// 現在の状態を取得
+    fn current_state(&self) -> &SessionStatus;
+    
+    /// デバッグ用画面バッファ表示
     fn debug_buffer(&self);
-    fn get_ui_execution_context(&self) -> Option<String>;
+    
+    /// 実行コンテキスト取得（● や ✦ マーカーの内容）
     fn get_ui_above_text(&self) -> Option<String>;
+    
+    /// 画面バッファサイズ変更
     fn resize_screen_buffer(&mut self, rows: usize, cols: usize);
 }
 ```
 
-## SessionState 列挙型
+## SessionStatus 列挙型
 
 ```rust
-enum SessionState {
-    Connected,      // 🔗 PTYセッション開始
-    Idle,          // 🔵 入力待ち・完了状態
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SessionStatus {
+    Connected,     // 🔗 PTYセッション開始・接続中
+    Idle,          // 🔵 入力待ち・完了状態・アイドル
     Busy,          // 🔵 処理実行中
-    WaitingForInput, // ⏳ ユーザー確認待ち
+    WaitingInput,  // ⏳ ユーザー確認待ち
+    Completed,     // ✅ セッション完了
     Error,         // 🔴 エラー状態
 }
 ```
@@ -37,9 +46,9 @@ enum SessionState {
 ### 構造
 
 ```rust
-struct ScreenClaudeStateDetector {
+pub struct ScreenClaudeStateDetector {
     screen_buffer: ScreenBuffer,              // VTEパーサー統合バッファ
-    current_state: SessionState,              // 現在の状態
+    current_state: SessionStatus,             // 現在の状態
     previous_had_esc_interrupt: bool,         // 前回の"esc to interrupt"状態
     last_state_change: Option<Instant>,       // 状態変更時刻
     verbose: bool,                           // デバッグ出力フラグ
@@ -50,215 +59,269 @@ struct ScreenClaudeStateDetector {
 
 #### 1. "esc to interrupt" パターン検出
 
-**検出対象**: `"esc to interrupt"` 文字列の出現・消失
+Claude固有の実行状態指標：
 
-**ロジック**:
 ```rust
-fn detect_claude_completion_state(&mut self) -> Option<SessionState> {
-    let screen_lines = self.screen_buffer.get_screen_lines();
-    let has_esc_interrupt = screen_lines.iter()
+fn detect_claude_completion_state(&mut self) -> Option<SessionStatus> {
+    let has_esc_interrupt = screen_lines
+        .iter()
         .any(|line| line.contains("esc to interrupt"));
     
-    // 出現: Idle → Busy
-    if !self.previous_had_esc_interrupt && has_esc_interrupt {
-        return Some(SessionState::Busy);
-    }
-    
-    // 消失: Busy → Idle (完了)
     if self.previous_had_esc_interrupt && !has_esc_interrupt {
-        return Some(SessionState::Idle);
+        // "esc to interrupt" が消えた = 実行完了
+        return Some(SessionStatus::Idle);
+    } else if !self.previous_had_esc_interrupt && has_esc_interrupt {
+        // "esc to interrupt" が現れた = 実行開始
+        return Some(SessionStatus::Busy);
     }
 }
 ```
 
-#### 2. UI Box内容での確認プロンプト検出
+#### 2. UI Box パターン検出
 
-**検出パターン**:
-- `"Do you want"`
-- `"Would you like"`
-- `"May I"`
-- `"proceed?"`
-- `"y/n"`
+UI boxからの状態判定：
 
-**ロジック**: UI box内のcontent_linesをスキャンして該当パターンを検索
+```rust
+// 承認プロンプト検出
+if content_line.contains("Do you want")
+    || content_line.contains("Would you like")
+    || content_line.contains("May I")
+    || content_line.contains("proceed?")
+    || content_line.contains("y/n")
+{
+    return Some(SessionStatus::WaitingInput);
+}
 
-#### 3. IDE接続状態検出
+// IDE接続確認
+if below_line.contains("◯ IDE connected") {
+    return Some(SessionStatus::Idle);
+}
+```
 
-**検出パターン**: `"◯ IDE connected"`
+#### 3. 実行コンテキスト抽出
 
-**ロジック**: UI boxのbelow_linesで検出した場合、Idle状態に遷移
+```rust
+fn get_ui_above_text(&self) -> Option<String> {
+    let screen_lines = self.screen_buffer.get_screen_lines();
+    
+    // 画面全体から行頭●マーカーを探す（逆順で最新のものを取得）
+    for line in screen_lines.iter().rev() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('●') {
+            let right_text = trimmed['●'.len_utf8()..].trim();
+            if !right_text.is_empty() {
+                return Some(right_text.to_string());
+            }
+        }
+    }
+    None
+}
+```
 
-### Claude特有の特徴
+### 検出パターン一覧
 
-- **高精度完了検出**: `"esc to interrupt"`の消失による確実な完了判定
-- **実行コンテキスト**: `"⏺ 実行中"`表示の解析
-- **状態遷移追跡**: 前回状態との比較による正確な変化検出
+| パターン | 状態 | 説明 |
+|----------|------|------|
+| `"esc to interrupt"` 出現 | Busy | Claude実行開始 |
+| `"esc to interrupt"` 消失 | Idle | Claude実行完了 |
+| `"Do you want"`, `"proceed?"` | WaitingInput | ユーザー確認待ち |
+| `"◯ IDE connected"` | Idle | IDE接続完了 |
+| `"●"` で始まる行 | - | 実行コンテキスト |
 
 ## Gemini状態検出器 (ScreenGeminiStateDetector)
 
 ### 構造
 
 ```rust
-struct ScreenGeminiStateDetector {
-    screen_buffer: ScreenBuffer,              // VTEパーサー統合バッファ
-    current_state: SessionState,              // 現在の状態
-    last_state_change: Option<Instant>,       // 状態変更時刻
-    verbose: bool,                           // デバッグ出力フラグ
+pub struct ScreenGeminiStateDetector {
+    screen_buffer: ScreenBuffer,
+    current_state: SessionStatus,
+    verbose: bool,
 }
 ```
 
 ### 主要検出ロジック
 
-#### 1. プロンプト準備完了検出
+#### 1. 単一行パターンチェック
 
-**検出対象**: UI box内で`>`から始まる行
-
-**ロジック**:
 ```rust
-if trimmed.starts_with('>') {
-    return Some(SessionState::Idle);
-}
-```
-
-**判定**: コマンドプロンプトが表示されている = アイドル状態
-
-#### 2. 処理中状態検出
-
-**検出パターン**: `"(esc to cancel"` (UI boxなし状態)
-
-**ロジック**:
-```rust
-// UI boxがない場合の画面全体スキャン
-for line in &screen_lines {
-    if trimmed.contains("(esc to cancel") {
-        return Some(SessionState::Busy);
+fn check_single_line_patterns(&self, line: &str) -> Option<SessionStatus> {
+    let trimmed = line.trim();
+    
+    // 入力待ち状態（最優先）
+    if line.contains("Waiting for user confirmation") {
+        return Some(SessionStatus::WaitingInput);
     }
+    
+    // 実行中状態
+    if line.contains("(esc to cancel") {
+        return Some(SessionStatus::Busy);
+    }
+    
+    None
 }
 ```
 
-#### 3. 確認プロンプト検出
+#### 2. UI Box + 周辺行検出
 
-**UI box内パターン**:
-- `"Allow execution?"`
-
-**UI box下パターン**:
-- `"waiting for user confirmation"`
-
-**ロジック**: 両方の位置での検出をサポート
-
-#### 4. 統計表示検出 (セッション終了)
-
-**検出パターン**: 
-- `"Cumulative Stats"`
-- `"Input Tokens"`
-
-**判定**: セッション完了後の統計情報表示 = アイドル状態
-
-### Gemini特有の特徴
-
-- **UI状態の多様性**: UI boxあり/なしの両方に対応
-- **視覚的プロンプト**: `>`記号による明確なアイドル判定
-- **統計情報活用**: セッション終了の確実な検出
-
-## VTE Parser統合 (ScreenBuffer)
-
-### PTY+1列バッファアーキテクチャ
-
-**問題**: ink.jsライブラリのUI box重複描画
-
-**解決策**:
 ```rust
-let buffer_cols = cols + 1;  // PTY cols + 1
-let grid = vec![vec![Cell::empty(); buffer_cols]; rows];
-
-// 表示は元のPTYサイズに制限
-let pty_cols = self.cols.saturating_sub(1);
-```
-
-### UI Box検出アルゴリズム
-
-**検出対象**: Unicode罫線文字 `╭╮╰╯`
-
-**アルゴリズム**:
-```rust
-fn find_ui_boxes(&self) -> Vec<UIBox> {
-    // 1. 上辺 (╭ ╮) の検出
-    // 2. 下辺 (╰ ╯) の検出  
-    // 3. 矩形範囲の確定
-    // 4. 内容・上下行の抽出
+fn detect_gemini_state(&mut self) -> Option<SessionStatus> {
+    // 全ての画面内容から状態パターンをチェック
+    if let Some(state) = self.check_screen_patterns(&screen_lines) {
+        return Some(state);
+    }
+    
+    // UI boxがある場合は、各UI boxとその上下の行をチェック
+    for ui_box in &ui_boxes {
+        for line in &ui_box.above_lines {
+            if let Some(state) = self.check_single_line_patterns(line) {
+                return Some(state);
+            }
+        }
+    }
+    
+    // 特別な状態が検出されない場合はIdle
+    Some(SessionStatus::Idle)
 }
 ```
 
-**抽出データ**:
-- `content_lines`: UI box内のテキスト
-- `above_lines`: UI box上部の行 (実行コンテキスト)
-- `below_lines`: UI box下部の行 (ステータス情報)
+#### 3. 実行コンテキスト抽出
 
-## 共通エラー検出
-
-両検出器で共通のエラーパターン：
-
-**検出パターン**:
-- `"✗"`
-- `"failed"`  
-- `"Error"`
-
-**判定**: いずれかが検出された場合、Error状態に遷移
-
-## デバッグ出力
-
-### Claude検出器
-
-```
-🔍 [CLAUDE_STATE] esc_interrupt: false → true, current: Idle
-🚀 [CLAUDE_START] 'esc to interrupt' appeared → Busy
-✅ [CLAUDE_COMPLETION] 'esc to interrupt' disappeared → Completing
+```rust
+fn get_ui_above_text(&self) -> Option<String> {
+    let screen_lines = self.screen_buffer.get_screen_lines();
+    
+    // 画面全体から行頭✦マーカーを探す（逆順で最新のものを取得）
+    for line in screen_lines.iter().rev() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('✦') {
+            let right_text = trimmed['✦'.len_utf8()..].trim();
+            if !right_text.is_empty() {
+                return Some(right_text.to_string());
+            }
+        }
+    }
+    None
+}
 ```
 
-### Gemini検出器
+### 検出パターン一覧
 
+| パターン | 状態 | 説明 |
+|----------|------|------|
+| `"(esc to cancel"` | Busy | Gemini処理中 |
+| `"Waiting for user confirmation"` | WaitingInput | ユーザー確認待ち |
+| `">"` で始まる行 | Idle | コマンドプロンプト |
+| `"✦"` で始まる行 | - | 実行コンテキスト |
+
+## ScreenBuffer統合
+
+### VTEパーサー機能
+
+両方の検出器は共通の`ScreenBuffer`を使用：
+
+```rust
+pub struct ScreenBuffer {
+    grid: Vec<Vec<Cell>>,           // 画面グリッド
+    cursor_row: usize,              // カーソル位置
+    cursor_col: usize,
+    rows: usize,                    // PTYサイズ
+    cols: usize,
+    verbose: bool,
+}
 ```
-✅ [GEMINI_READY] Command prompt ready: > 
-⏳ [GEMINI_INPUT] Waiting for input: Allow execution?
-⚡ [GEMINI_BUSY] Processing detected: ⠋ I'm Feeling Lucky (esc to cancel, 0s)
-📊 [GEMINI_STATS] Stats displayed, session idle
-```
+
+### 主要機能
+
+1. **ANSI Escape Sequence処理**
+   - CSI sequences (色、カーソル移動、消去)
+   - 文字出力とカーソル管理
+   - スクロール処理
+
+2. **UI Box検出**
+   ```rust
+   pub fn find_ui_boxes(&self) -> Vec<UiBox> {
+       // ╭╮╰╯ パターンでUI boxを検出
+       // 内容行と上下の行を抽出
+   }
+   ```
+
+3. **PTY+1列バッファ**
+   - 内部バッファ: PTY列数+1
+   - 表示出力: 元のPTYサイズ
+   - UIボックス重複問題を解決
 
 ## 状態遷移図
 
-### Claude
-```
-Connected → Idle ⇄ Busy → Idle
-    ↓         ↓
-WaitingForInput ← → Error
-```
+### Claude状態遷移
 
-### Gemini  
 ```
-Connected → Idle ⇄ Busy → Idle
-    ↓         ↓      ↓
-WaitingForInput ← → Error
+Connected → Idle ←→ Busy → Idle
+    ↓         ↑      ↓
+    └─────→ WaitingInput
+              ↓
+            Idle/Error
 ```
 
-## パフォーマンス考慮事項
+### Gemini状態遷移
 
-### 効率的なパターン検索
+```
+Connected → Idle ←→ Busy → Idle
+    ↓         ↑      ↓
+    └─────→ WaitingInput
+              ↓
+            Idle/Error
+```
 
-- 必要最小限の文字列検索
-- 早期リターンによる無駄な処理の回避
-- UI box検出の優先順位付け
+## パフォーマンス考慮
 
-### メモリ使用量
+### 最適化ポイント
 
-- 画面バッファサイズ: 80x24 + 1列 = 1,944文字
-- UI box情報の一時保存のみ
-- 不要なログ出力の制限
+1. **逆順検索**: 最新の実行コンテキストを効率的に取得
+2. **パターンマッチング**: 正規表現より高速な文字列contains
+3. **状態キャッシュ**: 不要な状態変化を防ぐ
+4. **画面バッファ制限**: メモリ使用量を制限
 
-## 今後の拡張
+### デバッグサポート
 
-### 新しいツール追加時の考慮事項
+Verboseモード時の詳細ログ：
 
-1. **専用検出器実装**: `ScreenXXXStateDetector`
-2. **ツール固有パターン**: 独自のUI要素・メッセージ
-3. **ファクトリー登録**: `state_detector.rs`への追加
-4. **テストケース**: 実際の使用パターンでの検証
+```rust
+if self.verbose {
+    eprintln!("🔍 [CLAUDE_STATE] esc_interrupt: {} → {}", 
+              self.previous_had_esc_interrupt, has_esc_interrupt);
+    eprintln!("🎯 [STATE_CHANGE] {:?} → {:?}", 
+              old_state, new_state);
+}
+```
+
+## 実装のベストプラクティス
+
+### 1. Unicode安全性
+```rust
+// 文字境界を考慮した文字列スライス
+let right_text = trimmed['●'.len_utf8()..].trim();
+```
+
+### 2. エラーハンドリング
+```rust
+// パターンマッチ失敗時の安全なフォールバック
+if let Some(state) = detect_pattern() {
+    return Some(state);
+}
+// デフォルト状態を返す
+Some(SessionStatus::Idle)
+```
+
+### 3. 状態一貫性
+```rust
+// 状態変化時のみ更新
+if new_state != self.current_state {
+    self.current_state = new_state.clone();
+    return Some(new_state);
+}
+```
+
+---
+
+この状態検出器アーキテクチャにより、climonitorは各CLIツールの細かな状態変化を正確に追跡し、リアルタイムで監視できます。

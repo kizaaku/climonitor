@@ -1,198 +1,204 @@
 # climonitor コードストラクチャ
 
-## ファイル構成と責務
+## プロジェクト概要
 
-### launcher/ (climonitor-launcher)
+climonitorは、Claude CodeとGemini CLIのリアルタイム監視を行うRustプロジェクトです。クライアント・サーバー構成により、複数のCLIセッションを同時に監視できます。
 
-#### main.rs
+## ディレクトリ構成
+
+```
+climonitor/
+├── shared/           # 共通ライブラリ（プロトコル定義）
+├── launcher/         # climonitor-launcher（CLIラッパー）
+├── monitor/          # climonitor（監視サーバー）
+├── docs/             # 技術ドキュメント
+└── CLAUDE.md         # Claude Code向けガイド
+```
+
+## shared/ (climonitor-shared)
+
+### src/protocol.rs
+- **責務**: クライアント・サーバー間通信プロトコル定義
+- **主要型**:
+  - `LauncherToMonitor` - launcher → monitor メッセージ
+  - `MonitorToLauncher` - monitor → launcher メッセージ（将来拡張用）
+  - `SessionStatus` - セッション状態（Connected, Idle, Busy, WaitingInput, Completed, Error）
+
+### src/cli_tool.rs
+- **責務**: CLIツール種別定義
+- **主要型**: `CliToolType` (Claude, Gemini)
+
+## launcher/ (climonitor-launcher)
+
+### src/main.rs
 - **責務**: CLI引数解析、メインエントリーポイント
-- **主要関数**: `main()`
-- **依存関係**:
-  - `launcher_client.rs` - `LauncherClient`の作成・実行
-  - `cli_tool.rs` - ツール型判定とPTYサイズ取得
+- **主要関数**: `main()` - 引数に基づいてLauncherClientを起動
 
-#### launcher_client.rs  
-- **責務**: サーバー接続、セッション管理、PTY統合
-- **主要関数**: 
-  - `LauncherClient::new()` - クライアント初期化
-  - `run()` - メインループ実行
-- **依存関係**:
-  - `tool_wrapper.rs` - CLIツールの起動
-  - `state_detector.rs` - 状態検出器の作成
-  - `session_state.rs` - セッション状態の管理
-  - `climonitor_shared::protocol` - サーバー通信
-
-#### tool_wrapper.rs
-- **責務**: CLIツールのPTY起動、I/O処理
+### src/launcher_client.rs
+- **責務**: monitor server接続、セッション管理、PTY統合
+- **主要構造体**: `LauncherClient`
 - **主要関数**:
-  - `ToolWrapper::new()` - ツールラッパー作成
-  - `spawn()` - PTYプロセス起動
-- **依存関係**:
-  - `claude_tool.rs` - Claude Code統合
-  - `gemini_tool.rs` - Gemini CLI統合
-  - `cli_tool.rs` - 共通CLIツール機能
-  - `portable_pty` - PTY機能
+  - `new()` - クライアント初期化
+  - `run_claude()` - Claudeセッション実行
+  - `start_pty_bidirectional_io()` - PTY I/O処理開始
+  - `send_state_update()` - 状態更新送信（永続接続）
+  - `send_status_update_persistent()` - 状態更新送信（新規接続）
 
-#### state_detector.rs
+### src/tool_wrapper.rs
+- **責務**: 複数CLIツールの統一インターフェース
+- **主要構造体**: `ToolWrapper`
+- **主要関数**:
+  - `new()` - ツール種別に応じたラッパー作成
+  - `spawn_with_pty()` - PTYでプロセス起動
+  - `run_directly()` - monitor接続なしで直接実行
+
+### src/claude_tool.rs / src/gemini_tool.rs
+- **責務**: 各CLIツール固有の起動ロジック
+- **主要構造体**: `ClaudeTool`, `GeminiTool`
+- **主要関数**: `spawn_with_pty()` - PTYでツール起動
+
+### src/state_detector.rs
 - **責務**: 状態検出器のファクトリーパターン、trait定義
-- **主要関数**:
-  - `create_state_detector()` - ツール別検出器作成
 - **trait**: `StateDetector`
-- **依存関係**:
-  - `screen_claude_detector.rs` - Claude専用検出器
-  - `screen_gemini_detector.rs` - Gemini専用検出器
+- **主要関数**: `create_state_detector()` - ツール別検出器作成
 
-#### screen_claude_detector.rs
+### src/screen_claude_detector.rs
 - **責務**: Claude固有の状態検出ロジック
-- **主要関数**:
-  - `ScreenClaudeStateDetector::new()` - 検出器初期化
-  - `detect_claude_completion_state()` - "esc to interrupt"検出
-- **検出パターン**: `"esc to interrupt"`, `"Do you want"`, `"proceed?"`
-- **依存関係**:
-  - `screen_buffer.rs` - 画面バッファ管理
-  - `session_state.rs` - 状態列挙型
+- **主要構造体**: `ScreenClaudeStateDetector`
+- **検出パターン**:
+  - `"esc to interrupt"` - 実行中状態
+  - `"Do you want"`, `"proceed?"` - 入力待ち状態
+  - `"◯ IDE connected"` - アイドル状態
+  - `●` マーカー - 実行コンテキスト抽出
 
-#### screen_gemini_detector.rs  
+### src/screen_gemini_detector.rs
 - **責務**: Gemini固有の状態検出ロジック
+- **主要構造体**: `ScreenGeminiStateDetector`
+- **検出パターン**:
+  - `"(esc to cancel"` - 実行中状態
+  - `"Waiting for user confirmation"` - 入力待ち状態
+  - `">"` - アイドル状態
+  - `✦` マーカー - 実行コンテキスト抽出
+
+### src/screen_buffer.rs
+- **責務**: VTEパーサーによる端末画面バッファ管理
+- **主要構造体**: `ScreenBuffer`
+- **主要機能**:
+  - ANSI escape sequence処理
+  - UIボックス検出（╭╮╰╯）
+  - PTY+1列バッファ（UIボックス重複問題解決）
+
+### src/cli_tool.rs
+- **責務**: PTYサイズ取得などの共通ユーティリティ
+- **主要関数**: `get_pty_size()` - 端末サイズ取得
+
+## monitor/ (climonitor)
+
+### src/main.rs
+- **責務**: CLI引数解析、monitor server起動
+- **主要関数**: `main()` - MonitorServerを起動
+
+### src/monitor_server.rs
+- **責務**: Unix Domain Socket server、メッセージ処理
+- **主要構造体**: `MonitorServer`
 - **主要関数**:
-  - `ScreenGeminiStateDetector::new()` - 検出器初期化
-  - `detect_gemini_state()` - Gemini状態検出
-- **検出パターン**: `"(esc to cancel"`, `">"プロンプト`, `"Allow execution?"`
-- **依存関係**:
-  - `screen_buffer.rs` - 画面バッファ管理
-  - `session_state.rs` - 状態列挙型
+  - `run()` - サーバーメインループ
+  - `handle_launcher_message()` - launcherメッセージ処理
 
-#### screen_buffer.rs
-- **責務**: VTEパーサー統合、画面バッファ管理、UI box検出
+### src/session_manager.rs
+- **責務**: セッション状態管理、launcher情報管理
+- **主要構造体**: `SessionManager`, `Session`, `LauncherInfo`
 - **主要関数**:
-  - `ScreenBuffer::new()` - バッファ初期化
-  - `process_data()` - ANSI sequence処理
-  - `find_ui_boxes()` - UI box検出
-- **依存関係**:
-  - `vte` クレート - VTEパーサー
+  - `register_launcher()` - launcher登録
+  - `update_session_status()` - セッション状態更新
+  - `remove_launcher()` - launcher削除時のクリーンアップ
 
-#### session_state.rs
-- **責務**: セッション状態の定義と変換
-- **enum**: `SessionState` (Idle, Busy, WaitingForInput, Error, Connected)
-- **主要関数**: `to_session_status()` - プロトコル形式への変換
-
-#### claude_tool.rs
-- **責務**: Claude Code固有の起動ロジック
+### src/live_ui.rs
+- **責務**: リアルタイムUI表示、セッション一覧表示
 - **主要関数**:
-  - `ClaudeTool::new()` - Claude設定
-  - `command_name()`, `get_project_name()` - メタデータ取得
+  - `display_sessions()` - セッション一覧表示
+  - `truncate_str()` - 長いテキストの切り詰め
 
-#### gemini_tool.rs
-- **責務**: Gemini CLI固有の起動ロジック  
+### src/unicode_utils.rs
+- **責務**: Unicode安全なテキスト処理
 - **主要関数**:
-  - `GeminiTool::new()` - Gemini設定
-  - `command_name()`, `get_project_name()` - メタデータ取得
+  - `truncate_str()` - grapheme cluster考慮のテキスト切り詰め
+  - `display_width()` - 表示幅計算
 
-#### cli_tool.rs
-- **責務**: CLIツール共通機能、PTYサイズ取得
-- **enum**: `CliToolType` (Claude, Gemini)
-- **主要関数**: 
-  - `get_pty_size()` - ターミナルサイズ取得
-  - 型変換functions
+## データフロー
 
-### monitor/ (climonitor)
-
-#### main.rs
-- **責務**: CLI引数解析、monitor起動
-- **主要関数**: `main()`
-- **依存関係**:
-  - `monitor_server.rs` - サーバー起動
-  - `live_ui.rs` - UIモード起動
-
-#### monitor_server.rs
-- **責務**: Unix Domain Socketサーバー、クライアント管理
-- **主要関数**:
-  - `MonitorServer::new()` - サーバー初期化
-  - `run()` - メインループ
-- **依存関係**:
-  - `session_manager.rs` - セッション状態管理
-  - `live_ui.rs` - UI更新
-  - `climonitor_shared::protocol` - 通信プロトコル
-
-#### session_manager.rs
-- **責務**: セッション状態の集約管理、統計情報
-- **主要関数**:
-  - `SessionManager::new()` - マネージャー初期化
-  - `update_session()` - セッション情報更新
-- **データ構造**: `HashMap<String, SessionInfo>` - セッション管理
-
-#### live_ui.rs
-- **責務**: リアルタイムターミナルUI、セッション表示
-- **主要関数**:
-  - `LiveUI::new()` - UI初期化
-  - `render()` - 画面描画
-- **依存関係**:
-  - `ratatui` - ターミナルUI
-  - `unicode_utils.rs` - Unicode処理
-
-#### unicode_utils.rs
-- **責務**: Unicode安全な文字列処理
-- **主要関数**:
-  - `truncate_unicode_aware()` - Unicode対応切り詰め
-  - `calculate_display_width()` - 表示幅計算
-
-### shared/ (climonitor-shared)
-
-#### protocol.rs
-- **責務**: クライアント・サーバー間通信プロトコル
-- **構造体**:
-  - `LauncherMessage` - launcher→monitor
-  - `MonitorMessage` - monitor→launcher  
-  - `SessionStatus` - 状態列挙型
-- **依存関係**: `serde` - JSON serialization
-
-## 呼び出し関係
-
-### launcher起動フロー
+### 1. 起動フロー
 ```
-main.rs
-├─ cli_tool::get_pty_size()
-├─ launcher_client::LauncherClient::new()
-└─ launcher_client::run()
-   ├─ tool_wrapper::ToolWrapper::new()
-   │  ├─ claude_tool::ClaudeTool::new()
-   │  └─ gemini_tool::GeminiTool::new()
-   ├─ state_detector::create_state_detector()
-   │  ├─ screen_claude_detector::ScreenClaudeStateDetector::new()
-   │  └─ screen_gemini_detector::ScreenGeminiStateDetector::new()
-   └─ tool_wrapper::spawn()
+1. climonitor --live → MonitorServer起動 → Unix Socket待機
+2. climonitor-launcher claude → LauncherClient起動 → Socket接続
+3. LauncherClient → Claude起動（PTY） → 状態検出開始
 ```
 
-### 状態検出フロー
+### 2. 状態検出フロー
 ```
-tool_wrapper::spawn()
-├─ pty output → state_detector::process_output()
-├─ screen_buffer::process_data()
-├─ screen_buffer::find_ui_boxes()
-├─ screen_*_detector::detect_*_state()
-└─ launcher_client → server (protocol::LauncherMessage)
+Claude出力 → PTY → ScreenBuffer → StateDetector → SessionStatus
+                                                        ↓
+monitor ← Unix Socket ← LauncherToMonitor::StateUpdate ←┘
 ```
 
-### monitor表示フロー
+### 3. 表示フロー
 ```
-monitor_server::run()
-├─ socket accept → protocol::LauncherMessage
-├─ session_manager::update_session()
-├─ live_ui::render()
-│  ├─ unicode_utils::truncate_unicode_aware()
-│  └─ ratatui rendering
-└─ protocol::MonitorMessage response
+SessionManager → セッション状態管理 → LiveUI → ターミナル表示
 ```
 
-## 主要データフロー
+## 重要な設計パターン
 
-1. **PTY Output** → `screen_buffer` → VTE parser → screen grid
-2. **Screen Grid** → `state_detector` → pattern matching → `SessionState`  
-3. **SessionState** → `protocol` → Unix Socket → monitor server
-4. **Monitor Server** → `session_manager` → aggregated state → `live_ui`
+### 1. 独立型状態検出器
+- 各ツール（Claude/Gemini）専用の検出器
+- 完全に独立したScreenBuffer
+- ツール固有パターンに最適化
 
-## 設定・環境変数
+### 2. クライアント・サーバー分離
+- launcher: PTY統合 + 状態検出
+- monitor: 状態管理 + UI表示
+- Unix Domain Socket通信
 
-- `CLIMONITOR_SOCKET_PATH` - ソケットパス (protocol.rs)
-- `ANTHROPIC_LOG=debug` - Claude詳細ログ
-- `RUST_LOG` - Rustログレベル
+### 3. PTY+1列バッファ
+- UIボックス重複問題の解決
+- ink.js期待動作とVTEパーサーの整合
+
+### 4. エラーハンドリング
+- launcher切断時の自動クリーンアップ
+- 接続失敗時のフォールバック
+- Unicode安全なテキスト処理
+
+## テスト構成
+
+### launcher/tests/
+- `integration_state_detection.rs` - 状態検出テスト
+- `integration_tool_wrapper.rs` - ツールラッパーテスト
+
+### monitor/tests/
+- `integration_protocol_basic.rs` - プロトコル基本テスト
+- `integration_session_management.rs` - セッション管理テスト
+- `integration_regression_detection.rs` - 回帰テスト
+
+## 依存関係グラフ
+
+```
+climonitor-monitor
+├── climonitor-shared (protocol)
+├── tokio (async runtime)
+├── ratatui (terminal UI)
+└── unicode-width, unicode-segmentation
+
+climonitor-launcher  
+├── climonitor-shared (protocol)
+├── portable-pty (PTY integration)
+├── vte (terminal parser)
+└── tokio (async runtime)
+
+climonitor-shared
+├── serde (serialization)
+├── chrono (timestamps)
+└── standard library
+```
+
+---
+
+このコードストラクチャにより、climonitorは高精度な状態検出と安定したリアルタイム監視を実現しています。
