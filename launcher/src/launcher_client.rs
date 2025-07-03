@@ -528,6 +528,7 @@ impl LauncherClient {
 
         let mut state_detector = create_state_detector(tool_type, verbose);
         let mut last_status = SessionStatus::Idle;
+        let mut last_status_change = std::time::Instant::now();
 
         // ターミナルサイズ監視用
         let mut last_terminal_size = crate::cli_tool::get_pty_size();
@@ -590,20 +591,35 @@ impl LauncherClient {
                     // 状態検出とモニター通知
                     if let Some(new_status) = state_detector.process_output(&output_str) {
                         if new_status != last_status {
-                            if verbose {
-                                eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?}");
-                            }
-                            last_status = new_status.clone();
+                            let now = std::time::Instant::now();
+                            let time_since_last_change = now.duration_since(last_status_change);
+                            
+                            // Busy → Idle の瞬間的遷移をデバウンス（1秒以内は無視）
+                            let should_ignore = matches!((&last_status, &new_status), 
+                                (SessionStatus::Busy, SessionStatus::Idle)) 
+                                && time_since_last_change < std::time::Duration::from_secs(1);
+                                
+                            if should_ignore {
+                                if verbose {
+                                    eprintln!("⏸️  Ignoring quick Busy->Idle transition ({:?})", time_since_last_change);
+                                }
+                            } else {
+                                if verbose {
+                                    eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?} (after {:?})", time_since_last_change);
+                                }
+                                last_status = new_status.clone();
+                                last_status_change = now;
 
-                            // 永続接続での状態更新（改善版）
-                            Self::send_status_update_persistent(
-                                &launcher_id,
-                                &session_id,
-                                new_status,
-                                &*state_detector,
-                                verbose,
-                            )
-                            .await;
+                                // 永続接続での状態更新（改善版）
+                                Self::send_status_update_persistent(
+                                    &launcher_id,
+                                    &session_id,
+                                    new_status,
+                                    &*state_detector,
+                                    verbose,
+                                )
+                                .await;
+                            }
                         }
                     }
 
