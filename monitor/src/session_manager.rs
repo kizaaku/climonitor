@@ -46,7 +46,8 @@ impl SessionManager {
         self.process_metrics.remove(launcher_id);
 
         // 関連セッションを完全削除
-        self.sessions.retain(|_, session| session.launcher_id != launcher_id);
+        self.sessions
+            .retain(|_, session| session.launcher_id != launcher_id);
 
         launcher
     }

@@ -721,23 +721,7 @@ impl LauncherClient {
         // 接続を確立してからメッセージを送信
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
-                // 最初にConnect互換メッセージを送信して確実にlauncherを登録
-                let connect_msg = LauncherToMonitor::Connect {
-                    launcher_id: launcher_id.to_string(),
-                    tool_type: crate::cli_tool::CliToolType::Claude, // TODO: 実際のツールタイプ
-                    claude_args: vec![],                             // 空のargs
-                    project: Some("unknown".to_string()),            // TODO: 実際のプロジェクト名
-                    working_dir: std::env::current_dir().unwrap_or_default(),
-                    timestamp: Utc::now(),
-                };
-
-                // Connectメッセージを送信
-                if let Ok(connect_bytes) = serde_json::to_vec(&connect_msg) {
-                    let _ = stream.write_all(&connect_bytes).await;
-                    let _ = stream.write_all(b"\n").await;
-                }
-
-                // 状態更新メッセージを送信
+                // 状態更新メッセージのみ送信（Connectメッセージは送らない）
                 let update_msg = LauncherToMonitor::StateUpdate {
                     launcher_id: launcher_id.to_string(),
                     session_id: session_id.to_string(),

@@ -55,9 +55,7 @@ impl ScreenGeminiStateDetector {
         // 入力待ち状態（最優先）
         if line.contains("Waiting for user confirmation") {
             if self.verbose {
-                eprintln!(
-                    "⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}"
-                );
+                eprintln!("⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}");
             }
             return Some(SessionStatus::WaitingInput);
         }
@@ -92,7 +90,7 @@ impl ScreenGeminiStateDetector {
                         return Some(state);
                     }
                 }
-                
+
                 for line in &ui_box.below_lines {
                     if let Some(state) = self.check_single_line_patterns(line) {
                         return Some(state);
