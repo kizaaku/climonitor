@@ -37,3 +37,8 @@ libc = "0.2"
 unicode-width = "0.1"
 unicode-segmentation = "1.10"
 regex = "1.10"
+
+# Test dependencies
+tempfile = "3.8"
+tokio-test = "0.4"
+

@@ -1,6 +1,6 @@
 use chrono::Utc;
 use climonitor_shared::{
-    CliToolType, LauncherInfo, LauncherStatus, LauncherToMonitor, ProcessMetrics, SessionInfo, SessionStatus,
+    LauncherInfo, LauncherStatus, LauncherToMonitor, ProcessMetrics, SessionInfo, SessionStatus,
 };
 use std::collections::HashMap;
 
@@ -263,7 +263,7 @@ pub struct SessionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use climonitor_shared::generate_connection_id;
+    use climonitor_shared::{generate_connection_id, CliToolType};
 
     #[test]
     fn test_launcher_lifecycle() {
