@@ -8,6 +8,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 
+use crate::notification::NotificationManager;
 use crate::session_manager::SessionManager;
 use climonitor_shared::LauncherToMonitor;
 
@@ -228,11 +229,33 @@ impl MonitorServer {
                             println!("📨 Parsed message from {connection_id}: {message:?}");
                         }
 
+                        // 通知用の情報を事前に抽出（ツール名も含む）
+                        let notification_info = match &message {
+                            LauncherToMonitor::StateUpdate { launcher_id, status, ui_above_text, .. } => {
+                                // デッドロック回避のため、先にツール名を取得
+                                let tool_name = {
+                                    let manager = session_manager.read().await;
+                                    manager.get_launcher(launcher_id)
+                                        .map(|l| l.tool_type.to_command().to_string())
+                                        .unwrap_or_else(|| "unknown".to_string())
+                                };
+                                Some((tool_name, status.clone(), ui_above_text.clone()))
+                            }
+                            _ => None,
+                        };
+
                         // セッションマネージャーで処理
                         if let Err(e) = session_manager.write().await.handle_message(message) {
                             eprintln!("⚠️  Message handling error: {e}");
-                        } else if verbose {
-                            println!("✅ Message processed successfully");
+                        } else {
+                            if verbose {
+                                println!("✅ Message processed successfully");
+                            }
+
+                            // 通知送信（StateUpdateの場合のみ）
+                            if let Some((tool_name, status, ui_above_text)) = notification_info {
+                                Self::send_notification_if_needed(tool_name, status, ui_above_text).await;
+                            }
                         }
 
                         // UI更新通知
@@ -352,6 +375,31 @@ impl MonitorServer {
     /// 外部クライアント用のソケットパス取得
     pub fn get_client_socket_path() -> Result<PathBuf> {
         Self::get_socket_path()
+    }
+
+    /// 必要に応じて通知を送信
+    async fn send_notification_if_needed(
+        tool_name: String,
+        status: climonitor_shared::SessionStatus,
+        ui_above_text: Option<String>,
+    ) {
+        use climonitor_shared::SessionStatus;
+        
+        let notification_manager = NotificationManager::new();
+        let message = ui_above_text.unwrap_or_else(|| "状態変化".to_string());
+        
+        // 作業待ちと完了時のみ通知
+        match status {
+            SessionStatus::WaitingInput => {
+                notification_manager.notify_waiting(&tool_name, &message, "").await;
+            }
+            SessionStatus::Idle => {
+                notification_manager.notify_completion(&tool_name, &message, "").await;
+            }
+            _ => {
+                // 他の状態では通知しない
+            }
+        }
     }
 }
 

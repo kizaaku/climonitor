@@ -181,6 +181,11 @@ impl SessionManager {
         self.launchers.keys().cloned().collect()
     }
 
+    /// launcher情報を取得
+    pub fn get_launcher(&self, launcher_id: &str) -> Option<&LauncherInfo> {
+        self.launchers.get(launcher_id)
+    }
+
     /// アクティブなセッション一覧
     pub fn get_active_sessions(&self) -> Vec<&SessionInfo> {
         let cutoff = Utc::now() - chrono::Duration::minutes(5);
