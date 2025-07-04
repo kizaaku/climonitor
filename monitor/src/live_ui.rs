@@ -154,11 +154,18 @@ impl LiveUI {
                     // UI box上のテキスト表示
                     let ui_above_display = if let Some(ref ui_text) = session.ui_above_text {
                         let terminal_width = get_terminal_width();
-                        let available_width = terminal_width.saturating_sub(20);
-                        format!(
-                            " {ui_text}",
-                            ui_text = truncate_str(ui_text, available_width)
-                        )
+                        // 固定部分の文字数を計算: "    🔵 🤖 完了 | 51s ago "
+                        let prefix_length = 4
+                            + 1
+                            + 2
+                            + 1
+                            + status_label.len()
+                            + execution_indicator.len()
+                            + 3
+                            + elapsed.len()
+                            + 1;
+                        let available_width = terminal_width.saturating_sub(prefix_length);
+                        format!(" {}", truncate_str(ui_text, available_width))
                     } else {
                         String::new()
                     };

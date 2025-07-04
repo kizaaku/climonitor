@@ -11,6 +11,7 @@ pub struct ScreenClaudeStateDetector {
     current_state: SessionStatus,
     previous_had_esc_interrupt: bool,
     last_state_change: Option<Instant>,
+    last_ui_context: Option<String>,
     verbose: bool,
 }
 
@@ -33,6 +34,7 @@ impl ScreenClaudeStateDetector {
             current_state: SessionStatus::Connected,
             previous_had_esc_interrupt: false,
             last_state_change: None,
+            last_ui_context: None,
             verbose,
         }
     }
@@ -110,6 +112,23 @@ impl ScreenClaudeStateDetector {
 
         None
     }
+
+    /// 現在のバッファからUIコンテキストを直接取得（キャッシュなし）
+    fn get_current_ui_context(&self) -> Option<String> {
+        let screen_lines = self.screen_buffer.get_screen_lines();
+
+        // 画面全体から行頭●マーカーを探す（逆順で最新のものを取得）
+        for line in screen_lines.iter().rev() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('●') {
+                let right_text = trimmed['●'.len_utf8()..].trim();
+                if !right_text.is_empty() {
+                    return Some(right_text.to_string());
+                }
+            }
+        }
+        None
+    }
 }
 
 impl StateDetector for ScreenClaudeStateDetector {
@@ -117,6 +136,12 @@ impl StateDetector for ScreenClaudeStateDetector {
         // 画面バッファを更新
         let bytes = output.as_bytes();
         self.screen_buffer.process_data(bytes);
+
+        // 新しいUIコンテキストがある場合は更新
+        let current_context = self.get_current_ui_context();
+        if current_context.is_some() {
+            self.last_ui_context = current_context;
+        }
 
         // Claude固有の"esc to interrupt"ロジックを適用
         if let Some(new_state) = self.detect_claude_completion_state() {
@@ -156,7 +181,9 @@ impl StateDetector for ScreenClaudeStateDetector {
                 }
             }
         }
-        None
+
+        // バッファ内にコンテキストがない場合は前回の状態を保持
+        self.last_ui_context.clone()
     }
 
     fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {

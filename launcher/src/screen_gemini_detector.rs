@@ -10,6 +10,7 @@ pub struct ScreenGeminiStateDetector {
     screen_buffer: ScreenBuffer,
     current_state: SessionStatus,
     last_state_change: Option<Instant>,
+    last_ui_context: Option<String>,
     verbose: bool,
 }
 
@@ -31,6 +32,7 @@ impl ScreenGeminiStateDetector {
             screen_buffer,
             current_state: SessionStatus::Connected,
             last_state_change: None,
+            last_ui_context: None,
             verbose,
         }
     }
@@ -111,6 +113,23 @@ impl ScreenGeminiStateDetector {
         }
         Some(SessionStatus::Idle)
     }
+
+    /// 現在のバッファからUIコンテキストを直接取得（キャッシュなし）
+    fn get_current_ui_context(&self) -> Option<String> {
+        let screen_lines = self.screen_buffer.get_screen_lines();
+
+        // 画面全体から行頭✦マーカーを探す（逆順で最新のものを取得）
+        for line in screen_lines.iter().rev() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('✦') {
+                let right_text = trimmed['✦'.len_utf8()..].trim();
+                if !right_text.is_empty() {
+                    return Some(right_text.to_string());
+                }
+            }
+        }
+        None
+    }
 }
 
 impl StateDetector for ScreenGeminiStateDetector {
@@ -118,6 +137,12 @@ impl StateDetector for ScreenGeminiStateDetector {
         // 基本的なスクリーンバッファ処理
         let bytes = output.as_bytes();
         self.screen_buffer.process_data(bytes);
+
+        // 新しいUIコンテキストがある場合は更新
+        let current_context = self.get_current_ui_context();
+        if current_context.is_some() {
+            self.last_ui_context = current_context;
+        }
 
         // Gemini特有の検出ロジックを適用
         if let Some(gemini_state) = self.detect_gemini_state() {
@@ -171,7 +196,9 @@ impl StateDetector for ScreenGeminiStateDetector {
                 }
             }
         }
-        None
+
+        // バッファ内にコンテキストがない場合は前回の状態を保持
+        self.last_ui_context.clone()
     }
 
     fn resize_screen_buffer(&mut self, rows: usize, cols: usize) {
