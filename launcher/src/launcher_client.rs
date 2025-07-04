@@ -1,6 +1,5 @@
 // launcher_client.rs の修正箇所
 
-use crate::state_detector::StateDetector;
 use anyhow::Result;
 use chrono::Utc;
 use portable_pty::MasterPty;
@@ -526,9 +525,9 @@ impl LauncherClient {
         use crate::state_detector::create_state_detector;
         use climonitor_shared::SessionStatus;
 
-        let mut state_detector = create_state_detector(tool_type, verbose);
-        let mut last_status = SessionStatus::Idle;
-        let mut last_status_change = std::time::Instant::now();
+        let state_detector: std::sync::Arc<std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>> = 
+            std::sync::Arc::new(std::sync::Mutex::new(create_state_detector(tool_type, verbose)));
+        let last_notified_status = std::sync::Arc::new(std::sync::Mutex::new(SessionStatus::Idle));
 
         // ターミナルサイズ監視用
         let mut last_terminal_size = crate::cli_tool::get_pty_size();
@@ -538,12 +537,32 @@ impl LauncherClient {
         let mut buffer = [0u8; 8192];
         let mut stdout = tokio::io::stdout();
 
+        // 定期的な状態チェックタスクを起動
+        let state_checker_task = {
+            let state_detector_clone = state_detector.clone();
+            let last_notified_status_clone = last_notified_status.clone();
+            let launcher_id_clone = launcher_id.clone();
+            let session_id_clone = session_id.clone();
+            
+            tokio::spawn(async move {
+                Self::periodic_state_checker(
+                    state_detector_clone,
+                    last_notified_status_clone,
+                    launcher_id_clone,
+                    session_id_clone,
+                    verbose,
+                ).await;
+            })
+        };
+
         loop {
             match pty_reader.read(&mut buffer) {
                 Ok(0) => {
                     if verbose {
                         eprintln!("📡 PTY reader EOF");
                     }
+                    // 状態チェッカータスクを停止
+                    state_checker_task.abort();
                     break;
                 }
                 Ok(n) => {
@@ -581,35 +600,18 @@ impl LauncherClient {
                                 current_terminal_size.rows
                             );
                         }
-                        state_detector.resize_screen_buffer(
-                            current_terminal_size.rows as usize,
-                            current_terminal_size.cols as usize,
-                        );
+                        if let Ok(mut detector) = state_detector.lock() {
+                            detector.resize_screen_buffer(
+                                current_terminal_size.rows as usize,
+                                current_terminal_size.cols as usize,
+                            );
+                        }
                         last_terminal_size = current_terminal_size;
                     }
 
-                    // 状態検出とモニター通知
-                    if let Some(new_status) = state_detector.process_output(&output_str) {
-                        if new_status != last_status {
-                            let now = std::time::Instant::now();
-                            let time_since_last_change = now.duration_since(last_status_change);
-                            
-                            if verbose {
-                                eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?} (after {:?})", time_since_last_change);
-                            }
-                            last_status = new_status.clone();
-                            last_status_change = now;
-
-                            // 永続接続での状態更新
-                            Self::send_status_update_persistent(
-                                &launcher_id,
-                                &session_id,
-                                new_status,
-                                &*state_detector,
-                                verbose,
-                            )
-                            .await;
-                        }
+                    // 状態検出器に出力を送信（内部状態更新のみ、通知はしない）
+                    if let Ok(mut detector) = state_detector.lock() {
+                        detector.process_output(&output_str);
                     }
 
                     // 出力をフラッシュ
@@ -622,6 +624,8 @@ impl LauncherClient {
                     if verbose {
                         eprintln!("⚠️  PTY read error: {e}");
                     }
+                    // 状態チェッカータスクを停止
+                    state_checker_task.abort();
                     break;
                 }
             }
@@ -709,12 +713,70 @@ impl LauncherClient {
     }
 
 
-    /// 状態更新送信（短命接続だが安定性重視）
-    async fn send_status_update_persistent(
+    /// 定期的な状態チェッカー（1秒ごと）
+    async fn periodic_state_checker(
+        state_detector: std::sync::Arc<std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>>,
+        last_notified_status: std::sync::Arc<std::sync::Mutex<SessionStatus>>,
+        launcher_id: String,
+        session_id: String,
+        verbose: bool,
+    ) {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        
+        loop {
+            interval.tick().await;
+            
+            let current_status = {
+                if let Ok(detector) = state_detector.lock() {
+                    detector.current_state().clone()
+                } else {
+                    continue;
+                }
+            };
+            
+            let should_notify = {
+                if let Ok(mut last_status) = last_notified_status.lock() {
+                    if current_status != *last_status {
+                        *last_status = current_status.clone();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            
+            if should_notify {
+                if verbose {
+                    eprintln!("🔄 Periodic status update: {current_status:?}");
+                }
+                
+                let ui_above_text = {
+                    if let Ok(detector) = state_detector.lock() {
+                        detector.get_ui_above_text()
+                    } else {
+                        None
+                    }
+                };
+                
+                Self::send_status_update_simple(
+                    &launcher_id,
+                    &session_id,
+                    current_status,
+                    ui_above_text,
+                    verbose,
+                ).await;
+            }
+        }
+    }
+
+    /// 簡易状態更新送信（UI情報なし）
+    async fn send_status_update_simple(
         launcher_id: &str,
         session_id: &str,
         status: SessionStatus,
-        detector: &dyn StateDetector,
+        ui_above_text: Option<String>,
         verbose: bool,
     ) {
         let socket_path = std::env::var("CLIMONITOR_SOCKET_PATH").unwrap_or_else(|_| {
@@ -724,16 +786,14 @@ impl LauncherClient {
                 .to_string()
         });
 
-        // 接続を確立してからメッセージを送信
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
-                // 状態更新メッセージのみ送信（Connectメッセージは送らない）
                 let update_msg = LauncherToMonitor::StateUpdate {
                     launcher_id: launcher_id.to_string(),
                     session_id: session_id.to_string(),
                     status: status.clone(),
-                    ui_above_text: detector.get_ui_above_text(),
-                    timestamp: Utc::now(),
+                    ui_above_text,
+                    timestamp: chrono::Utc::now(),
                 };
 
                 if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
@@ -742,17 +802,18 @@ impl LauncherClient {
                     let _ = stream.flush().await;
 
                     if verbose {
-                        eprintln!("📤 Sent status update with launcher registration: {status:?}");
+                        eprintln!("📤 Sent periodic status update: {status:?}");
                     }
                 }
             }
             Err(_) => {
                 if verbose {
-                    eprintln!("⚠️  Failed to send status update (monitor not available)");
+                    eprintln!("⚠️  Failed to send periodic status update (monitor not available)");
                 }
             }
         }
     }
+
 }
 
 /// 強制的にターミナルをcooked modeに復元（エラー時の緊急用）
