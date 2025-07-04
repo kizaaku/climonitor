@@ -111,13 +111,22 @@ climonitor/
 - **主要関数**:
   - `register_launcher()` - launcher登録
   - `update_session_status()` - セッション状態更新
+  - `get_launchers_by_project()` - プロジェクト別launcher取得
   - `remove_launcher()` - launcher削除時のクリーンアップ
 
 ### src/live_ui.rs
-- **責務**: リアルタイムUI表示、セッション一覧表示
+- **責務**: リアルタイムUI表示、launcher-based表示システム
+- **主要構造体**: `LiveUI`
 - **主要関数**:
-  - `display_sessions()` - セッション一覧表示
-  - `truncate_str()` - 長いテキストの切り詰め
+  - `run()` - ライブUI表示ループ
+  - `render_sessions()` - launcher-based セッション表示
+  - `format_duration_since()` - ロケール対応時間表示
+
+### src/notification.rs
+- **責務**: 状態変化通知システム
+- **主要関数**:
+  - `send_notification_if_needed()` - 通知スクリプト実行
+  - 対応スクリプト: `~/.config/climonitor/notify.sh`
 
 ### src/unicode_utils.rs
 - **責務**: Unicode安全なテキスト処理
@@ -143,7 +152,12 @@ monitor ← Unix Socket ← LauncherToMonitor::StateUpdate ←┘
 
 ### 3. 表示フロー
 ```
-SessionManager → セッション状態管理 → LiveUI → ターミナル表示
+SessionManager → launcher-based表示 → LiveUI → ターミナル表示
+```
+
+### 4. 通知フロー
+```
+状態変化 → notification::send_notification_if_needed() → ~/.config/climonitor/notify.sh
 ```
 
 ## 重要な設計パターン
@@ -155,14 +169,23 @@ SessionManager → セッション状態管理 → LiveUI → ターミナル表
 
 ### 2. クライアント・サーバー分離
 - launcher: PTY統合 + 状態検出
-- monitor: 状態管理 + UI表示
+- monitor: 状態管理 + UI表示 + 通知
 - Unix Domain Socket通信
 
-### 3. PTY+1列バッファ
+### 3. Launcher-based表示システム
+- セッション-based からlauncher-basedに移行
+- 接続済みlauncherを常に表示
+- セッション状態の有無を適切に処理
+
+### 4. PTY+1列バッファ
 - UIボックス重複問題の解決
 - ink.js期待動作とVTEパーサーの整合
 
-### 4. エラーハンドリング
+### 5. ロケール対応
+- 日本語/英語環境での時刻表示
+- Unicode安全なテキスト処理
+
+### 6. エラーハンドリング
 - launcher切断時の自動クリーンアップ
 - 接続失敗時のフォールバック
 - Unicode安全なテキスト処理
