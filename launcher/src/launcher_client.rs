@@ -594,35 +594,21 @@ impl LauncherClient {
                             let now = std::time::Instant::now();
                             let time_since_last_change = now.duration_since(last_status_change);
                             
-                            // Busy → Idle の瞬間的遷移をデバウンス（1秒以内は無視）
-                            let should_ignore = matches!((&last_status, &new_status), 
-                                (SessionStatus::Busy, SessionStatus::Idle)) 
-                                && time_since_last_change < std::time::Duration::from_secs(1);
-                                
-                            if should_ignore {
-                                if verbose {
-                                    eprintln!("⏸️  Ignoring quick Busy->Idle transition ({:?}), but updating internal state", time_since_last_change);
-                                }
-                                // デバウンス処理で監視側への通知は無視するが、内部状態は正確に同期
-                                last_status = new_status.clone();
-                                last_status_change = now;
-                            } else {
-                                if verbose {
-                                    eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?} (after {:?})", time_since_last_change);
-                                }
-                                last_status = new_status.clone();
-                                last_status_change = now;
-
-                                // 永続接続での状態更新（改善版）
-                                Self::send_status_update_persistent(
-                                    &launcher_id,
-                                    &session_id,
-                                    new_status,
-                                    &*state_detector,
-                                    verbose,
-                                )
-                                .await;
+                            if verbose {
+                                eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?} (after {:?})", time_since_last_change);
                             }
+                            last_status = new_status.clone();
+                            last_status_change = now;
+
+                            // 永続接続での状態更新
+                            Self::send_status_update_persistent(
+                                &launcher_id,
+                                &session_id,
+                                new_status,
+                                &*state_detector,
+                                verbose,
+                            )
+                            .await;
                         }
                     }
 
