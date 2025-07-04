@@ -109,6 +109,22 @@ impl SessionManager {
                     .map(|launcher| (launcher.project.clone(), Some(launcher.tool_type.clone())))
                     .unwrap_or((None, None));
 
+                // 既存セッションから前回の状態変更時刻を取得
+                let (created_at, last_status_change) = self
+                    .sessions
+                    .get(&session_id)
+                    .map(|s| {
+                        let last_change = if s.status != status {
+                            // 状態が変化した場合は現在時刻
+                            timestamp
+                        } else {
+                            // 状態が同じ場合は前回の変更時刻を保持
+                            s.last_status_change
+                        };
+                        (s.created_at, last_change)
+                    })
+                    .unwrap_or((timestamp, timestamp));
+
                 let session = SessionInfo {
                     id: session_id.clone(),
                     launcher_id: launcher_id.clone(),
@@ -122,12 +138,9 @@ impl SessionManager {
                     usage_reset_time: None,          // 簡易実装では空
                     is_waiting_for_execution: false, // 簡易実装では固定値
                     ui_above_text,
-                    created_at: self
-                        .sessions
-                        .get(&session_id)
-                        .map(|s| s.created_at)
-                        .unwrap_or(timestamp),
+                    created_at,
                     last_activity: timestamp,
+                    last_status_change,
                 };
 
                 self.update_session(session);
@@ -184,6 +197,11 @@ impl SessionManager {
     /// launcher情報を取得
     pub fn get_launcher(&self, launcher_id: &str) -> Option<&LauncherInfo> {
         self.launchers.get(launcher_id)
+    }
+
+    /// セッション情報を取得
+    pub fn get_session(&self, session_id: &str) -> Option<&SessionInfo> {
+        self.sessions.get(session_id)
     }
 
     /// アクティブなセッション一覧

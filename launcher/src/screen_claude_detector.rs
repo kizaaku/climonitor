@@ -39,11 +39,19 @@ impl ScreenClaudeStateDetector {
 
     /// Claude固有の完了状態検出: "esc to interrupt"の有無で判定
     fn detect_claude_completion_state(&mut self) -> Option<SessionStatus> {
-        // 現在の画面に"esc to interrupt"があるかチェック
-        let screen_lines = self.screen_buffer.get_screen_lines();
-        let has_esc_interrupt = screen_lines
-            .iter()
-            .any(|line| line.contains("esc to interrupt"));
+        // UIボックス近辺での"esc to interrupt)"検出のみ
+        let ui_boxes = self.screen_buffer.find_ui_boxes();
+        let has_esc_interrupt = if let Some(latest_box) = ui_boxes.last() {
+            // UIボックス上の2行以内に"esc to interrupt)"があるかチェック
+            latest_box.above_lines
+                .iter()
+                .rev()  // 下から上へ検索
+                .take(2)  // 最大2行
+                .any(|line| line.contains("esc to interrupt)"))
+        } else {
+            // UIボックスがない場合は実行中ではないと判断
+            false
+        };
 
         let now = Instant::now();
 

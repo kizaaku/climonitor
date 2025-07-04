@@ -132,6 +132,7 @@ pub struct SessionInfo {
     pub last_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
+    pub last_status_change: DateTime<Utc>,
     pub launcher_context: Option<String>,
     pub usage_reset_time: Option<String>,
     pub is_waiting_for_execution: bool,

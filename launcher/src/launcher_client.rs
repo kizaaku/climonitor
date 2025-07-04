@@ -601,8 +601,11 @@ impl LauncherClient {
                                 
                             if should_ignore {
                                 if verbose {
-                                    eprintln!("⏸️  Ignoring quick Busy->Idle transition ({:?})", time_since_last_change);
+                                    eprintln!("⏸️  Ignoring quick Busy->Idle transition ({:?}), but updating internal state", time_since_last_change);
                                 }
+                                // デバウンス処理で監視側への通知は無視するが、内部状態は正確に同期
+                                last_status = new_status.clone();
+                                last_status_change = now;
                             } else {
                                 if verbose {
                                     eprintln!("🔄 Status changed: {last_status:?} -> {new_status:?} (after {:?})", time_since_last_change);
@@ -718,6 +721,7 @@ impl LauncherClient {
             Err(anyhow::anyhow!("No active connection to monitor server"))
         }
     }
+
 
     /// 状態更新送信（短命接続だが安定性重視）
     async fn send_status_update_persistent(
