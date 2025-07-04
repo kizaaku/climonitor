@@ -37,6 +37,8 @@ libc = "0.2"
 unicode-width = "0.1"
 unicode-segmentation = "1.10"
 regex = "1.10"
+term_size = "0.3"
+home = "0.5"
 
 # Test dependencies
 tempfile = "3.8"

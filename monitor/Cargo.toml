@@ -23,8 +23,8 @@ regex = "1.10"
 signal-hook = "0.3"
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-term_size = "0.3"
-home = "0.5"
+term_size.workspace = true
+home.workspace = true
 
 [dev-dependencies]
 climonitor-launcher = { path = "../launcher" }
