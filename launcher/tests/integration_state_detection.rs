@@ -26,10 +26,17 @@ fn test_claude_busy_detection_with_real_sequence() {
 
     for (i, line) in busy_sequence.iter().enumerate() {
         detector.process_output(line);
-        println!("Line {}: Processed, current state: {:?}", i + 1, detector.current_state());
+        println!(
+            "Line {}: Processed, current state: {:?}",
+            i + 1,
+            detector.current_state()
+        );
     }
 
-    println!("Final state after processing sequence: {:?}", detector.current_state());
+    println!(
+        "Final state after processing sequence: {:?}",
+        detector.current_state()
+    );
     assert_eq!(
         *detector.current_state(),
         SessionStatus::Busy,
@@ -144,7 +151,10 @@ fn test_claude_busy_to_idle_transition() {
 
     for line in &idle_transition {
         detector.process_output(line);
-        println!("Processed transition line, current state: {:?}", detector.current_state());
+        println!(
+            "Processed transition line, current state: {:?}",
+            detector.current_state()
+        );
     }
 
     println!("Final state: {:?}", detector.current_state());
@@ -207,7 +217,10 @@ fn test_claude_unicode_japanese_handling() {
 
     for line in &japanese_sequence {
         detector.process_output(line);
-        println!("Processed Japanese line, current state: {:?}", detector.current_state());
+        println!(
+            "Processed Japanese line, current state: {:?}",
+            detector.current_state()
+        );
     }
 
     println!("Final state: {:?}", detector.current_state());

@@ -120,7 +120,8 @@ impl LiveUI {
         let session_manager = self.session_manager.read().await;
         let sessions_by_project = session_manager.get_sessions_by_project();
 
-        if sessions_by_project.is_empty() {
+        // launcher接続があるかをチェック
+        if session_manager.get_active_launchers().is_empty() {
             println!("⏳ No launcher connections");
             println!("💡 Start with: climonitor-launcher claude");
             println!();
@@ -128,6 +129,13 @@ impl LiveUI {
         }
 
         // セッション表示開始（ヘッダーなし）
+
+        if sessions_by_project.is_empty() {
+            // launcherはあるがsessionがない場合
+            println!("🔗 Launcher connected, waiting for session data...");
+            println!();
+            return;
+        }
 
         for (project_name, sessions) in sessions_by_project {
             println!("  📁 {project_name}:");

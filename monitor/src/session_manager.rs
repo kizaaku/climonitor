@@ -83,15 +83,17 @@ impl SessionManager {
                 timestamp,
             } => {
                 let launcher = LauncherInfo {
-                    id: launcher_id,
-                    project,
-                    tool_type,
+                    id: launcher_id.clone(),
+                    project: project.clone(),
+                    tool_type: tool_type.clone(),
                     claude_args,
                     working_dir,
                     connected_at: timestamp,
                     last_activity: timestamp,
                     status: LauncherStatus::Connected,
                 };
+
+                // launcher を登録
                 self.add_launcher(launcher)
             }
 

@@ -43,10 +43,11 @@ impl ScreenClaudeStateDetector {
         let ui_boxes = self.screen_buffer.find_ui_boxes();
         let has_esc_interrupt = if let Some(latest_box) = ui_boxes.last() {
             // UIボックス上の2行以内に"esc to interrupt)"があるかチェック
-            latest_box.above_lines
+            latest_box
+                .above_lines
                 .iter()
-                .rev()  // 下から上へ検索
-                .take(2)  // 最大2行
+                .rev() // 下から上へ検索
+                .take(2) // 最大2行
                 .any(|line| line.contains("esc to interrupt)"))
         } else {
             // UIボックスがない場合は実行中ではないと判断

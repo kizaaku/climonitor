@@ -231,25 +231,39 @@ impl MonitorServer {
 
                         // 通知用の情報を事前に抽出（ツール名と経過時間も含む）
                         let notification_info = match &message {
-                            LauncherToMonitor::StateUpdate { launcher_id, session_id, status, ui_above_text, .. } => {
+                            LauncherToMonitor::StateUpdate {
+                                launcher_id,
+                                session_id,
+                                status,
+                                ui_above_text,
+                                ..
+                            } => {
                                 // デッドロック回避のため、先に必要な情報を取得
                                 let (tool_name, duration_seconds) = {
                                     let manager = session_manager.read().await;
-                                    let tool_name = manager.get_launcher(launcher_id)
+                                    let tool_name = manager
+                                        .get_launcher(launcher_id)
                                         .map(|l| l.tool_type.to_command().to_string())
                                         .unwrap_or_else(|| "unknown".to_string());
-                                    
+
                                     // 前回の状態変化からの経過時間を計算
-                                    let duration_seconds = if let Some(session) = manager.get_session(session_id) {
-                                        let elapsed = chrono::Utc::now().signed_duration_since(session.last_status_change);
-                                        elapsed.num_seconds().max(0) as u64
-                                    } else {
-                                        0
-                                    };
-                                    
+                                    let duration_seconds =
+                                        if let Some(session) = manager.get_session(session_id) {
+                                            let elapsed = chrono::Utc::now()
+                                                .signed_duration_since(session.last_status_change);
+                                            elapsed.num_seconds().max(0) as u64
+                                        } else {
+                                            0
+                                        };
+
                                     (tool_name, duration_seconds)
                                 };
-                                Some((tool_name, duration_seconds, status.clone(), ui_above_text.clone()))
+                                Some((
+                                    tool_name,
+                                    duration_seconds,
+                                    status.clone(),
+                                    ui_above_text.clone(),
+                                ))
                             }
                             _ => None,
                         };
@@ -263,8 +277,16 @@ impl MonitorServer {
                             }
 
                             // 通知送信（StateUpdateの場合のみ）
-                            if let Some((tool_name, duration_seconds, status, ui_above_text)) = notification_info {
-                                Self::send_notification_if_needed(tool_name, duration_seconds, status, ui_above_text).await;
+                            if let Some((tool_name, duration_seconds, status, ui_above_text)) =
+                                notification_info
+                            {
+                                Self::send_notification_if_needed(
+                                    tool_name,
+                                    duration_seconds,
+                                    status,
+                                    ui_above_text,
+                                )
+                                .await;
                             }
                         }
 
@@ -395,18 +417,22 @@ impl MonitorServer {
         ui_above_text: Option<String>,
     ) {
         use climonitor_shared::SessionStatus;
-        
+
         let notification_manager = NotificationManager::new();
         let message = ui_above_text.unwrap_or_else(|| "状態変化".to_string());
         let duration_str = format!("{duration_seconds}s");
-        
+
         // 作業待ちと完了時のみ通知
         match status {
             SessionStatus::WaitingInput => {
-                notification_manager.notify_waiting(&tool_name, &message, &duration_str).await;
+                notification_manager
+                    .notify_waiting(&tool_name, &message, &duration_str)
+                    .await;
             }
             SessionStatus::Idle => {
-                notification_manager.notify_completion(&tool_name, &message, &duration_str).await;
+                notification_manager
+                    .notify_completion(&tool_name, &message, &duration_str)
+                    .await;
             }
             _ => {
                 // 他の状態では通知しない

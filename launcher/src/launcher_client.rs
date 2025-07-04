@@ -520,8 +520,11 @@ impl LauncherClient {
         use crate::state_detector::create_state_detector;
         use climonitor_shared::SessionStatus;
 
-        let state_detector: std::sync::Arc<std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>> = 
-            std::sync::Arc::new(std::sync::Mutex::new(create_state_detector(tool_type, verbose)));
+        let state_detector: std::sync::Arc<
+            std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>,
+        > = std::sync::Arc::new(std::sync::Mutex::new(create_state_detector(
+            tool_type, verbose,
+        )));
         let last_notified_status = std::sync::Arc::new(std::sync::Mutex::new(SessionStatus::Idle));
 
         // ターミナルサイズ監視用
@@ -538,7 +541,7 @@ impl LauncherClient {
             let last_notified_status_clone = last_notified_status.clone();
             let launcher_id_clone = launcher_id.clone();
             let session_id_clone = session_id.clone();
-            
+
             tokio::spawn(async move {
                 Self::periodic_state_checker(
                     state_detector_clone,
@@ -546,7 +549,8 @@ impl LauncherClient {
                     launcher_id_clone,
                     session_id_clone,
                     verbose,
-                ).await;
+                )
+                .await;
             })
         };
 
@@ -684,17 +688,19 @@ impl LauncherClient {
 
     /// 定期的な状態チェッカー（1秒ごと）
     async fn periodic_state_checker(
-        state_detector: std::sync::Arc<std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>>,
+        state_detector: std::sync::Arc<
+            std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>,
+        >,
         last_notified_status: std::sync::Arc<std::sync::Mutex<SessionStatus>>,
         launcher_id: String,
         session_id: String,
         verbose: bool,
     ) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-        
+
         loop {
             interval.tick().await;
-            
+
             let current_status = {
                 if let Ok(detector) = state_detector.lock() {
                     detector.current_state().clone()
@@ -702,7 +708,7 @@ impl LauncherClient {
                     continue;
                 }
             };
-            
+
             let should_notify = {
                 if let Ok(mut last_status) = last_notified_status.lock() {
                     if current_status != *last_status {
@@ -715,12 +721,12 @@ impl LauncherClient {
                     false
                 }
             };
-            
+
             if should_notify {
                 if verbose {
                     eprintln!("🔄 Periodic status update: {current_status:?}");
                 }
-                
+
                 let ui_above_text = {
                     if let Ok(detector) = state_detector.lock() {
                         detector.get_ui_above_text()
@@ -728,14 +734,15 @@ impl LauncherClient {
                         None
                     }
                 };
-                
+
                 Self::send_status_update_simple(
                     &launcher_id,
                     &session_id,
                     current_status,
                     ui_above_text,
                     verbose,
-                ).await;
+                )
+                .await;
             }
         }
     }
@@ -782,7 +789,6 @@ impl LauncherClient {
             }
         }
     }
-
 }
 
 /// 強制的にターミナルをcooked modeに復元（エラー時の緊急用）

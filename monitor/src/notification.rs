@@ -25,15 +25,10 @@ impl NotificationManager {
     }
 
     /// 通知スクリプトを実行
-    pub async fn notify(
-        &self,
-        event_type: &str,
-        tool: &str,
-        message: &str,
-        duration: &str,
-    ) {
+    pub async fn notify(&self, event_type: &str, tool: &str, message: &str, duration: &str) {
         if let Some(ref script_path) = self.script_path {
-            self.execute_script(script_path, event_type, tool, message, duration).await;
+            self.execute_script(script_path, event_type, tool, message, duration)
+                .await;
         }
         // スクリプトがない場合は何もしない（エラーも出さない）
     }
