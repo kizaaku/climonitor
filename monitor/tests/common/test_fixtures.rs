@@ -83,6 +83,7 @@ pub fn create_test_session_info(launcher_id: String, status: SessionStatus) -> S
         project: Some("test-project".to_string()),
         tool_type: Some(CliToolType::Claude),
         status,
+        previous_status: None,
         confidence: 0.9,
         evidence: vec!["test evidence".to_string()],
         last_message: Some("test message".to_string()),

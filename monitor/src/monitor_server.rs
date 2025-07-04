@@ -279,8 +279,13 @@ impl MonitorServer {
                             }
 
                             // 通知送信（StateUpdateの場合のみ）
-                            if let Some((tool_name, duration_seconds, status, ui_above_text, previous_status)) =
-                                notification_info
+                            if let Some((
+                                tool_name,
+                                duration_seconds,
+                                status,
+                                ui_above_text,
+                                previous_status,
+                            )) = notification_info
                             {
                                 Self::send_notification_if_needed(
                                     tool_name,
@@ -427,7 +432,9 @@ impl MonitorServer {
         let duration_str = format!("{duration_seconds}s");
 
         // WaitingInput -> Idle の場合はキャンセルとみなして通知しない
-        if let (Some(SessionStatus::WaitingInput), SessionStatus::Idle) = (&previous_status, &status) {
+        if let (Some(SessionStatus::WaitingInput), SessionStatus::Idle) =
+            (&previous_status, &status)
+        {
             return;
         }
 
