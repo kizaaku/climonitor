@@ -246,6 +246,31 @@ impl SessionManager {
         projects
     }
 
+    /// プロジェクト別ランチャー取得（セッションと結合）
+    pub fn get_launchers_by_project(
+        &self,
+    ) -> HashMap<String, Vec<(&LauncherInfo, Option<&SessionInfo>)>> {
+        let mut projects: HashMap<String, Vec<(&LauncherInfo, Option<&SessionInfo>)>> =
+            HashMap::new();
+
+        for launcher in self.get_active_launchers() {
+            let project_name = launcher.project.as_deref().unwrap_or_default().to_string();
+
+            // このlauncherに対応するセッションを検索
+            let session = self
+                .sessions
+                .values()
+                .find(|s| s.launcher_id == launcher.id);
+
+            projects
+                .entry(project_name)
+                .or_default()
+                .push((launcher, session));
+        }
+
+        projects
+    }
+
     /// 統計情報取得
     pub fn get_stats(&self) -> SessionStats {
         let active_sessions = self.sessions.len();

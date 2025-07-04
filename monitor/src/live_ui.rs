@@ -107,101 +107,93 @@ impl LiveUI {
 
     /// ヘッダー描画
     async fn render_header(&self) {
-        let stats = self.session_manager.read().await.get_stats();
+        let session_manager = self.session_manager.read().await;
+        let launcher_count = session_manager.get_active_launchers().len();
         let terminal_width = get_terminal_width();
 
         println!("🔥 Claude Session Monitor - Live Mode");
-        println!("📊 Session: {stats}", stats = stats.total_sessions);
+        println!("📊 Launchers: {launcher_count}");
         println!("{}", "═".repeat(terminal_width));
     }
 
-    /// セッション詳細描画
+    /// ランチャー詳細描画（セッション情報も含む）
     async fn render_sessions(&self) {
         let session_manager = self.session_manager.read().await;
-        let sessions_by_project = session_manager.get_sessions_by_project();
+        let launchers_by_project = session_manager.get_launchers_by_project();
 
         // launcher接続があるかをチェック
-        if session_manager.get_active_launchers().is_empty() {
+        if launchers_by_project.is_empty() {
             println!("⏳ No launcher connections");
             println!("💡 Start with: climonitor-launcher claude");
             println!();
             return;
         }
 
-        // セッション表示開始（ヘッダーなし）
-
-        if sessions_by_project.is_empty() {
-            // launcherはあるがsessionがない場合
-            println!("🔗 Launcher connected, waiting for session data...");
-            println!();
-            return;
-        }
-
-        for (project_name, sessions) in sessions_by_project {
+        for (project_name, launchers) in launchers_by_project {
             println!("  📁 {project_name}:");
 
-            for session in sessions {
-                let status_icon = session.status.icon();
-                let status_label = session.status.label();
-                let elapsed = format_duration_since(session.last_activity);
-                // confidence表示を削除
+            for (launcher, session_opt) in launchers {
+                // Tool type display
+                let tool_type_display = match launcher.tool_type {
+                    climonitor_shared::CliToolType::Claude => " 🤖",
+                    climonitor_shared::CliToolType::Gemini => " ✨",
+                };
 
-                // 不要な表示項目を削除（ui_above_textで置き換え）
+                if let Some(session) = session_opt {
+                    // セッションがある場合：通常表示
+                    let status_icon = session.status.icon();
+                    let status_label = session.status.label();
+                    let elapsed = format_duration_since(session.last_activity);
 
-                // Show tool type
-                let tool_type_display = if let Some(ref tool_type) = session.tool_type {
-                    match tool_type {
-                        climonitor_shared::CliToolType::Claude => " 🤖",
-                        climonitor_shared::CliToolType::Gemini => " ✨",
+                    let execution_indicator = if session.is_waiting_for_execution {
+                        " ⏳"
+                    } else {
+                        ""
+                    };
+
+                    // UI box上のテキスト表示
+                    let ui_above_display = if let Some(ref ui_text) = session.ui_above_text {
+                        let terminal_width = get_terminal_width();
+                        let available_width = terminal_width.saturating_sub(20);
+                        format!(
+                            " {ui_text}",
+                            ui_text = truncate_str(ui_text, available_width)
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                    println!(
+                        "    {status_icon}{tool_type_display} {status_label}{execution_indicator} | {elapsed}{ui_above_display}"
+                    );
+
+                    // 最新メッセージ表示
+                    if let Some(ref message) = session.last_message {
+                        let preview = truncate_str(message, 60);
+                        println!("      💬 {preview}");
+                    }
+
+                    // Usage reset time display
+                    if let Some(ref reset_time) = session.usage_reset_time {
+                        println!("      ⏰ Usage resets at: {reset_time}");
+                    }
+
+                    // 詳細情報（verbose モード）
+                    if self.verbose && !session.evidence.is_empty() {
+                        let evidence = session.evidence.join(", ");
+                        println!("      🔍 Evidence: {evidence}");
+                    }
+
+                    if self.verbose {
+                        if let Some(ref context) = session.launcher_context {
+                            let context_display = truncate_str(context, 50);
+                            println!("      📝 Context: {context_display}");
+                        }
                     }
                 } else {
-                    ""
-                };
-
-                let execution_indicator = if session.is_waiting_for_execution {
-                    " ⏳"
-                } else {
-                    ""
-                };
-
-                // UI box上のテキスト表示（⏺以降）
-                let ui_above_display = if let Some(ref ui_text) = session.ui_above_text {
-                    let terminal_width = get_terminal_width();
-                    let available_width = terminal_width.saturating_sub(20); // 余白を考慮
-                    format!(
-                        " {ui_text}",
-                        ui_text = truncate_str(ui_text, available_width)
-                    )
-                } else {
-                    String::new()
-                };
-
-                println!(
-                    "    {status_icon}{tool_type_display} {status_label}{execution_indicator} | {elapsed}{ui_above_display}"
-                );
-
-                // 最新メッセージ表示
-                if let Some(ref message) = session.last_message {
-                    let preview = truncate_str(message, 60);
-                    println!("      💬 {preview}");
-                }
-
-                // Usage reset time display
-                if let Some(ref reset_time) = session.usage_reset_time {
-                    println!("      ⏰ Usage resets at: {reset_time}");
-                }
-
-                // 詳細情報（verbose モード）
-                if self.verbose && !session.evidence.is_empty() {
-                    let evidence = session.evidence.join(", ");
-                    println!("      🔍 Evidence: {evidence}");
-                }
-
-                if self.verbose {
-                    if let Some(ref context) = session.launcher_context {
-                        let context_display = truncate_str(context, 50);
-                        println!("      📝 Context: {context_display}");
-                    }
+                    // セッションがない場合：待機中表示
+                    let elapsed = format_duration_since(launcher.last_activity);
+                    println!("    🔗{tool_type_display} 接続済み | {elapsed}");
                 }
             }
             println!();
