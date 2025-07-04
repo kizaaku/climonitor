@@ -239,30 +239,32 @@ impl MonitorServer {
                                 ..
                             } => {
                                 // デッドロック回避のため、先に必要な情報を取得
-                                let (tool_name, duration_seconds) = {
+                                let (tool_name, duration_seconds, previous_status) = {
                                     let manager = session_manager.read().await;
                                     let tool_name = manager
                                         .get_launcher(launcher_id)
                                         .map(|l| l.tool_type.to_command().to_string())
                                         .unwrap_or_else(|| "unknown".to_string());
 
-                                    // 前回の状態変化からの経過時間を計算
-                                    let duration_seconds =
+                                    // 前回の状態変化からの経過時間と前の状態を取得
+                                    let (duration_seconds, previous_status) =
                                         if let Some(session) = manager.get_session(session_id) {
                                             let elapsed = chrono::Utc::now()
                                                 .signed_duration_since(session.last_status_change);
-                                            elapsed.num_seconds().max(0) as u64
+                                            let duration = elapsed.num_seconds().max(0) as u64;
+                                            (duration, Some(session.status.clone()))
                                         } else {
-                                            0
+                                            (0, None)
                                         };
 
-                                    (tool_name, duration_seconds)
+                                    (tool_name, duration_seconds, previous_status)
                                 };
                                 Some((
                                     tool_name,
                                     duration_seconds,
                                     status.clone(),
                                     ui_above_text.clone(),
+                                    previous_status,
                                 ))
                             }
                             _ => None,
@@ -277,7 +279,7 @@ impl MonitorServer {
                             }
 
                             // 通知送信（StateUpdateの場合のみ）
-                            if let Some((tool_name, duration_seconds, status, ui_above_text)) =
+                            if let Some((tool_name, duration_seconds, status, ui_above_text, previous_status)) =
                                 notification_info
                             {
                                 Self::send_notification_if_needed(
@@ -285,6 +287,7 @@ impl MonitorServer {
                                     duration_seconds,
                                     status,
                                     ui_above_text,
+                                    previous_status,
                                 )
                                 .await;
                             }
@@ -415,12 +418,18 @@ impl MonitorServer {
         duration_seconds: u64,
         status: climonitor_shared::SessionStatus,
         ui_above_text: Option<String>,
+        previous_status: Option<climonitor_shared::SessionStatus>,
     ) {
         use climonitor_shared::SessionStatus;
 
         let notification_manager = NotificationManager::new();
         let message = ui_above_text.unwrap_or_else(|| "状態変化".to_string());
         let duration_str = format!("{duration_seconds}s");
+
+        // WaitingInput -> Idle の場合はキャンセルとみなして通知しない
+        if let (Some(SessionStatus::WaitingInput), SessionStatus::Idle) = (&previous_status, &status) {
+            return;
+        }
 
         // 作業待ちと完了時のみ通知
         match status {

@@ -112,9 +112,8 @@ impl SessionManager {
                     .unwrap_or((None, None));
 
                 // 既存セッションから前回の状態変更時刻を取得
-                let (created_at, last_status_change) = self
-                    .sessions
-                    .get(&session_id)
+                let existing_session = self.sessions.get(&session_id);
+                let (created_at, last_status_change) = existing_session
                     .map(|s| {
                         let last_change = if s.status != status {
                             // 状態が変化した場合は現在時刻
@@ -133,6 +132,7 @@ impl SessionManager {
                     project,
                     tool_type,
                     status,
+                    previous_status: existing_session.as_ref().map(|s| s.status.clone()),
                     confidence: 1.0,                 // 簡易実装では固定値
                     evidence: Vec::new(),            // 簡易実装では空
                     last_message: None,              // 簡易実装では空

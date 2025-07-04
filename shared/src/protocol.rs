@@ -127,6 +127,7 @@ pub struct SessionInfo {
     pub project: Option<String>,
     pub tool_type: Option<CliToolType>,
     pub status: SessionStatus,
+    pub previous_status: Option<SessionStatus>, // 前の状態（通知判定用）
     pub confidence: f32,
     pub evidence: Vec<String>,
     pub last_message: Option<String>,
