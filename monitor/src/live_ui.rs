@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
@@ -203,31 +203,48 @@ impl LiveUI {
     /// フッター描画
     fn render_footer(&self) {
         if let Some(last_update) = self.last_update {
+            // UTCからローカル時刻に変換
+            let local_time = last_update.with_timezone(&Local);
             println!(
                 "🔄 Last update: {} | Press Ctrl+C to exit",
-                last_update.format("%H:%M:%S")
+                local_time.format("%H:%M:%S")
             );
         }
     }
 }
 
-/// 時間経過フォーマット
+/// 時間経過フォーマット（ロケール対応）
 fn format_duration_since(time: DateTime<Utc>) -> String {
     let now = Utc::now();
     let duration = now.signed_duration_since(time);
 
+    // システムロケールに基づいて適切な suffix を決定
+    let (seconds_suffix, minutes_suffix, hours_suffix, days_suffix) = get_locale_suffixes();
+
     if duration.num_seconds() < 60 {
         let seconds = duration.num_seconds();
-        format!("{seconds}s ago")
+        format!("{seconds}{seconds_suffix}")
     } else if duration.num_minutes() < 60 {
         let minutes = duration.num_minutes();
-        format!("{minutes}m ago")
+        format!("{minutes}{minutes_suffix}")
     } else if duration.num_hours() < 24 {
         let hours = duration.num_hours();
-        format!("{hours}h ago")
+        format!("{hours}{hours_suffix}")
     } else {
         let days = duration.num_days();
-        format!("{days}d ago")
+        format!("{days}{days_suffix}")
+    }
+}
+
+/// ロケールに基づいて時間単位のサフィックスを取得
+fn get_locale_suffixes() -> (&'static str, &'static str, &'static str, &'static str) {
+    // 環境変数でロケールを判定
+    let lang = std::env::var("LANG").unwrap_or_else(|_| "en".to_string());
+
+    if lang.starts_with("ja") {
+        ("秒前", "分前", "時間前", "日前")
+    } else {
+        ("s ago", "m ago", "h ago", "d ago")
     }
 }
 
@@ -288,14 +305,28 @@ mod tests {
 
         // 30秒前
         let time = now - chrono::Duration::seconds(30);
-        assert!(format_duration_since(time).contains("s ago"));
+        let result = format_duration_since(time);
+        assert!(result.contains("30") && (result.contains("s ago") || result.contains("秒前")));
 
         // 5分前
         let time = now - chrono::Duration::minutes(5);
-        assert!(format_duration_since(time).contains("m ago"));
+        let result = format_duration_since(time);
+        assert!(result.contains("5") && (result.contains("m ago") || result.contains("分前")));
 
         // 2時間前
         let time = now - chrono::Duration::hours(2);
-        assert!(format_duration_since(time).contains("h ago"));
+        let result = format_duration_since(time);
+        assert!(result.contains("2") && (result.contains("h ago") || result.contains("時間前")));
+    }
+
+    #[test]
+    fn test_locale_suffixes() {
+        let (s, m, h, d) = get_locale_suffixes();
+
+        // English or Japanese suffixes should be returned
+        assert!(
+            (s == "s ago" && m == "m ago" && h == "h ago" && d == "d ago")
+                || (s == "秒前" && m == "分前" && h == "時間前" && d == "日前")
+        );
     }
 }
