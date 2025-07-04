@@ -244,8 +244,7 @@ impl LauncherClient {
             eprintln!("✅ Connect message sent successfully");
         }
 
-        // 初期状態メッセージを送信（detector無しなのでNoneで）
-        self.send_state_update(SessionStatus::Idle, None).await?;
+        // 初期状態は定期チェッカーが自動的に送信
 
         // ターミナルガードはmain関数で作成済み（ここでは作らない）
         let terminal_guard = DummyTerminalGuard {
@@ -276,11 +275,7 @@ impl LauncherClient {
         // 少し待機してI/Oが完了するのを待つ
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // ターミナル設定を明示的に復元（Dropでも復元されるが念のため）
-        // TODO: Re-enable terminal guard restoration
-        // if let Some(guard) = &terminal_guard {
-        //     guard.restore();
-        // }
+        // ターミナル設定は自動的に復元される
 
         match exit_status {
             Ok(status) => {
@@ -686,32 +681,6 @@ impl LauncherClient {
             eprintln!("📡 Stdin to PTY forwarding ended");
         }
     }
-
-    /// 永続接続を使用して状態更新を送信
-    async fn send_state_update(
-        &mut self,
-        status: SessionStatus,
-        ui_above_text: Option<String>,
-    ) -> Result<()> {
-        let update_msg = LauncherToMonitor::StateUpdate {
-            launcher_id: self.launcher_id.clone(),
-            session_id: self.session_id.clone(),
-            status,
-            ui_above_text,
-            timestamp: Utc::now(),
-        };
-
-        if let Some(ref mut stream) = self.socket_stream {
-            let msg_bytes = serde_json::to_vec(&update_msg)?;
-            stream.write_all(&msg_bytes).await?;
-            stream.write_all(b"\n").await?;
-            stream.flush().await?;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("No active connection to monitor server"))
-        }
-    }
-
 
     /// 定期的な状態チェッカー（1秒ごと）
     async fn periodic_state_checker(

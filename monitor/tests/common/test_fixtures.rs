@@ -88,6 +88,7 @@ pub fn create_test_session_info(launcher_id: String, status: SessionStatus) -> S
         last_message: Some("test message".to_string()),
         created_at: Utc::now(),
         last_activity: Utc::now(),
+        last_status_change: Utc::now(),
         launcher_context: Some("test context".to_string()),
         usage_reset_time: None,
         is_waiting_for_execution: false,

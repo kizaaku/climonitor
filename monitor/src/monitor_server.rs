@@ -398,7 +398,7 @@ impl MonitorServer {
         
         let notification_manager = NotificationManager::new();
         let message = ui_above_text.unwrap_or_else(|| "状態変化".to_string());
-        let duration_str = format!("{}s", duration_seconds);
+        let duration_str = format!("{duration_seconds}s");
         
         // 作業待ちと完了時のみ通知
         match status {
