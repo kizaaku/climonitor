@@ -78,13 +78,13 @@ chmod +x ~/.config/climonitor/notify.sh
 通知スクリプトには以下の引数が渡されます：
 
 ```bash
-notify.sh <tool_name> <duration_seconds> <status> [ui_text]
+notify.sh <event_type> <tool_name> <message> <duration>
 ```
 
+- `event_type`: イベント種別（`waiting`, `error`, `completed`）
 - `tool_name`: ツール名（`claude` または `gemini`）
-- `duration_seconds`: 実行時間（秒）
-- `status`: 状態（`running`, `idle`, `waiting_for_input`, `error`）
-- `ui_text`: UI上のテキスト（オプション、状態によって有無が変わる）
+- `message`: メッセージ内容
+- `duration`: 実行時間（例：`30s`）
 
 ### 通知スクリプトの例
 
@@ -159,7 +159,7 @@ esac
    - スクリプト内でログ出力を追加してテスト
    - 手動でスクリプトを実行してテスト:
      ```bash
-     ~/.config/climonitor/notify.sh claude 30 waiting_for_input "Allow execution? (y/n)"
+     ~/.config/climonitor/notify.sh waiting claude "Allow execution? (y/n)" 30
      ```
 
 3. **環境変数が必要な場合**
