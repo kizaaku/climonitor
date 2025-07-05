@@ -192,8 +192,7 @@ fn test_timestamp_field_presence() {
             // ProcessMetrics は削除済み
             LauncherToMonitor::Disconnect { .. } => {
                 assert!(json_value["Disconnect"]["timestamp"].is_string());
-            }
-            // ProcessMetrics削除により到達不可能
+            } // ProcessMetrics削除により到達不可能
         }
     }
 }
