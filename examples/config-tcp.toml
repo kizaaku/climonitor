@@ -10,6 +10,15 @@ type = "tcp"
 # launcher: このアドレスに接続
 tcp_bind_addr = "127.0.0.1:3001"
 
+# TCP接続時のIP許可リスト（空の場合は全て許可）
+# 単一IP、CIDR記法、"localhost"キーワードをサポート
+tcp_allowed_ips = [
+    "127.0.0.1",           # ローカルホスト
+    "192.168.1.0/24",      # ローカルネットワーク
+    # "localhost",         # localhost（127.0.0.1と::1）
+    # "any",               # 全てのIPを許可（推奨しない）
+]
+
 # Unix socket接続時のソケットパス（tcpの場合は不要）
 # unix_socket_path = "/tmp/climonitor.sock"
 

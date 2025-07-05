@@ -37,6 +37,10 @@ pub struct ConnectionSettings {
     
     /// Unix socket接続時のソケットパス
     pub unix_socket_path: Option<PathBuf>,
+    
+    /// TCP接続時のIP許可リスト（空の場合は全て許可）
+    #[serde(default)]
+    pub tcp_allowed_ips: Vec<String>,
 }
 
 /// ログ関連の設定
@@ -83,6 +87,7 @@ impl Default for ConnectionSettings {
             r#type: default_connection_type(),
             tcp_bind_addr: default_tcp_bind_addr(),
             unix_socket_path: None,
+            tcp_allowed_ips: Vec::new(),
         }
     }
 }
@@ -224,6 +229,7 @@ impl Config {
         match self.connection.r#type.as_str() {
             "tcp" => ConnectionConfig::Tcp {
                 bind_addr: self.connection.tcp_bind_addr.clone(),
+                allowed_ips: self.connection.tcp_allowed_ips.clone(),
             },
             "unix" | _ => ConnectionConfig::Unix {
                 socket_path: self.connection.unix_socket_path
@@ -356,10 +362,104 @@ verbose = true
         config.connection.tcp_bind_addr = "localhost:8080".to_string();
         
         match config.to_connection_config() {
-            ConnectionConfig::Tcp { bind_addr } => {
+            ConnectionConfig::Tcp { bind_addr, allowed_ips } => {
                 assert_eq!(bind_addr, "localhost:8080");
+                assert!(allowed_ips.is_empty());
             }
             _ => panic!("Expected TCP connection config"),
         }
+        
+        // TCP IP許可リスト設定をテスト
+        config.connection.tcp_allowed_ips = vec![
+            "127.0.0.1".to_string(),
+            "192.168.1.0/24".to_string(),
+            "localhost".to_string(),
+        ];
+        
+        match config.to_connection_config() {
+            ConnectionConfig::Tcp { bind_addr, allowed_ips } => {
+                assert_eq!(bind_addr, "localhost:8080");
+                assert_eq!(allowed_ips.len(), 3);
+                assert!(allowed_ips.contains(&"127.0.0.1".to_string()));
+                assert!(allowed_ips.contains(&"192.168.1.0/24".to_string()));
+                assert!(allowed_ips.contains(&"localhost".to_string()));
+            }
+            _ => panic!("Expected TCP connection config"),
+        }
+    }
+
+    #[test]
+    fn test_ip_allow_list_functionality() {
+        use crate::ConnectionConfig;
+        use std::net::SocketAddr;
+        use std::str::FromStr;
+
+        // 許可リストが空の場合（全て許可）
+        let config = ConnectionConfig::Tcp {
+            bind_addr: "127.0.0.1:3001".to_string(),
+            allowed_ips: vec![],
+        };
+        
+        let addr = SocketAddr::from_str("192.168.1.100:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+
+        // 特定IPを許可
+        let config = ConnectionConfig::Tcp {
+            bind_addr: "127.0.0.1:3001".to_string(),
+            allowed_ips: vec!["127.0.0.1".to_string(), "192.168.1.100".to_string()],
+        };
+        
+        // 許可されたIP
+        let addr = SocketAddr::from_str("127.0.0.1:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+        
+        let addr = SocketAddr::from_str("192.168.1.100:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+        
+        // 許可されていないIP
+        let addr = SocketAddr::from_str("192.168.1.101:12345").unwrap();
+        assert!(!config.is_ip_allowed(&addr));
+
+        // CIDR記法のテスト
+        let config = ConnectionConfig::Tcp {
+            bind_addr: "127.0.0.1:3001".to_string(),
+            allowed_ips: vec!["192.168.1.0/24".to_string()],
+        };
+        
+        // ネットワーク内のIP
+        let addr = SocketAddr::from_str("192.168.1.50:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+        
+        let addr = SocketAddr::from_str("192.168.1.255:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+        
+        // ネットワーク外のIP
+        let addr = SocketAddr::from_str("192.168.2.1:12345").unwrap();
+        assert!(!config.is_ip_allowed(&addr));
+
+        // 特別なパターンのテスト
+        let config = ConnectionConfig::Tcp {
+            bind_addr: "127.0.0.1:3001".to_string(),
+            allowed_ips: vec!["localhost".to_string()],
+        };
+        
+        // localhostパターン
+        let addr = SocketAddr::from_str("127.0.0.1:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+        
+        let addr = SocketAddr::from_str("[::1]:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
+        
+        // localhost以外
+        let addr = SocketAddr::from_str("192.168.1.1:12345").unwrap();
+        assert!(!config.is_ip_allowed(&addr));
+        
+        // Unix socketは常に許可
+        let config = ConnectionConfig::Unix {
+            socket_path: PathBuf::from("/tmp/test.sock"),
+        };
+        
+        let addr = SocketAddr::from_str("0.0.0.0:12345").unwrap();
+        assert!(config.is_ip_allowed(&addr));
     }
 }

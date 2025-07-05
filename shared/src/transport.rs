@@ -1,5 +1,7 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use std::net::IpAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 /// 接続設定
@@ -10,6 +12,7 @@ pub enum ConnectionConfig {
     },
     Tcp {
         bind_addr: String, // "0.0.0.0:3001" or "localhost:3001"
+        allowed_ips: Vec<String>, // IP許可リスト
     },
 }
 
@@ -25,6 +28,7 @@ impl ConnectionConfig {
     pub fn default_tcp() -> Self {
         Self::Tcp {
             bind_addr: "127.0.0.1:3001".to_string(),
+            allowed_ips: Vec::new(),
         }
     }
 
@@ -33,6 +37,7 @@ impl ConnectionConfig {
         if let Ok(tcp_addr) = std::env::var("CLIMONITOR_TCP_ADDR") {
             Self::Tcp {
                 bind_addr: tcp_addr,
+                allowed_ips: Vec::new(),
             }
         } else if let Ok(socket_path) = std::env::var("CLIMONITOR_SOCKET_PATH") {
             Self::Unix {
@@ -40,6 +45,29 @@ impl ConnectionConfig {
             }
         } else {
             Self::default_unix()
+        }
+    }
+
+    /// TCP接続のIP許可チェック
+    pub fn is_ip_allowed(&self, peer_addr: &std::net::SocketAddr) -> bool {
+        match self {
+            ConnectionConfig::Unix { .. } => true, // Unix socketは常に許可
+            ConnectionConfig::Tcp { allowed_ips, .. } => {
+                // 許可リストが空の場合は全て許可
+                if allowed_ips.is_empty() {
+                    return true;
+                }
+
+                let peer_ip = peer_addr.ip();
+                
+                for allowed_pattern in allowed_ips {
+                    if is_ip_match(&peer_ip, allowed_pattern) {
+                        return true;
+                    }
+                }
+                
+                false
+            }
         }
     }
 }
@@ -126,14 +154,14 @@ impl ServerTransport {
                     socket_path: socket_path.clone(),
                 })
             }
-            ConnectionConfig::Tcp { bind_addr } => {
+            ConnectionConfig::Tcp { bind_addr, .. } => {
                 let listener = tokio::net::TcpListener::bind(bind_addr).await?;
                 Ok(Self::Tcp { listener })
             }
         }
     }
 
-    pub async fn accept(&mut self) -> Result<Connection> {
+    pub async fn accept(&mut self, config: &ConnectionConfig) -> Result<Connection> {
         match self {
             ServerTransport::Unix {
                 listener,
@@ -151,6 +179,12 @@ impl ServerTransport {
             }
             ServerTransport::Tcp { listener } => {
                 let (stream, addr) = listener.accept().await?;
+                
+                // IP許可チェック
+                if !config.is_ip_allowed(&addr) {
+                    return Err(anyhow!("Connection from {} is not allowed", addr.ip()));
+                }
+                
                 let (reader, writer) = stream.into_split();
                 let peer_addr = format!("tcp:{}", addr);
 
@@ -196,7 +230,7 @@ impl ClientTransport {
                     peer_addr,
                 })
             }
-            ConnectionConfig::Tcp { bind_addr } => {
+            ConnectionConfig::Tcp { bind_addr, .. } => {
                 let stream = tokio::net::TcpStream::connect(bind_addr).await?;
                 let addr = stream.peer_addr()?;
                 let (reader, writer) = stream.into_split();
@@ -220,4 +254,65 @@ pub async fn create_server_transport(config: &ConnectionConfig) -> Result<Server
 /// 設定に応じて適切なクライアントで接続
 pub async fn connect_client(config: &ConnectionConfig) -> Result<Connection> {
     ClientTransport::connect(config).await
+}
+
+/// IPアドレスと許可パターンのマッチング
+fn is_ip_match(ip: &IpAddr, pattern: &str) -> bool {
+    // 完全一致
+    if let Ok(allowed_ip) = IpAddr::from_str(pattern) {
+        return *ip == allowed_ip;
+    }
+    
+    // CIDR記法のサポート
+    if let Some((network, prefix_len)) = pattern.split_once('/') {
+        if let (Ok(network_ip), Ok(prefix)) = (IpAddr::from_str(network), prefix_len.parse::<u8>()) {
+            return is_ip_in_network(ip, &network_ip, prefix);
+        }
+    }
+    
+    // 特別なパターン
+    match pattern {
+        "localhost" => {
+            *ip == IpAddr::from([127, 0, 0, 1]) || *ip == IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])
+        }
+        "any" | "*" => true,
+        _ => false,
+    }
+}
+
+/// IPアドレスがネットワークに含まれるかチェック
+fn is_ip_in_network(ip: &IpAddr, network: &IpAddr, prefix_len: u8) -> bool {
+    match (ip, network) {
+        (IpAddr::V4(ip), IpAddr::V4(net)) => {
+            if prefix_len > 32 { return false; }
+            let mask = if prefix_len == 0 { 0 } else { !((1u32 << (32 - prefix_len)) - 1) };
+            (u32::from(*ip) & mask) == (u32::from(*net) & mask)
+        }
+        (IpAddr::V6(ip), IpAddr::V6(net)) => {
+            if prefix_len > 128 { return false; }
+            let ip_bytes = ip.octets();
+            let net_bytes = net.octets();
+            
+            let full_bytes = prefix_len / 8;
+            let remaining_bits = prefix_len % 8;
+            
+            // 完全な8ビット単位でのマッチング
+            if ip_bytes[..full_bytes as usize] != net_bytes[..full_bytes as usize] {
+                return false;
+            }
+            
+            // 残りのビットでのマッチング
+            if remaining_bits > 0 {
+                let mask = 0xFF << (8 - remaining_bits);
+                let ip_byte = ip_bytes[full_bytes as usize];
+                let net_byte = net_bytes[full_bytes as usize];
+                if (ip_byte & mask) != (net_byte & mask) {
+                    return false;
+                }
+            }
+            
+            true
+        }
+        _ => false, // IPv4とIPv6の混在は許可しない
+    }
 }

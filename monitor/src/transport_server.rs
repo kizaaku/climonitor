@@ -65,7 +65,7 @@ impl TransportMonitorServer {
         loop {
             tokio::select! {
                 // 新しい接続を受け入れ
-                accept_result = server_transport.accept() => {
+                accept_result = server_transport.accept(&self.config) => {
                     match accept_result {
                         Ok(connection) => {
                             let connection_id = climonitor_shared::generate_connection_id();
