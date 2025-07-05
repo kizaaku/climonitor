@@ -77,10 +77,20 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.live {
         // ライブモード：Monitor サーバーとして動作
-        run_live_mode(connection_config, config.logging.verbose, config.logging.log_file).await?;
+        run_live_mode(
+            connection_config,
+            config.logging.verbose,
+            config.logging.log_file,
+        )
+        .await?;
     } else {
         // デフォルト：ライブモード
-        run_live_mode(connection_config, config.logging.verbose, config.logging.log_file).await?;
+        run_live_mode(
+            connection_config,
+            config.logging.verbose,
+            config.logging.log_file,
+        )
+        .await?;
     }
 
     Ok(())
@@ -94,7 +104,7 @@ async fn run_live_mode(
 ) -> anyhow::Result<()> {
     if verbose {
         println!("🔧 Starting monitor server in verbose mode...");
-        println!("🔧 Connection config: {:?}", config);
+        println!("🔧 Connection config: {config:?}");
         if let Some(ref log_path) = log_file {
             let log_display = log_path.display();
             println!("📝 Log file: {log_display}");

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use climonitor_shared::{Connection, ConnectionConfig, LauncherToMonitor, ServerTransport, create_server_transport};
+use climonitor_shared::{
+    create_server_transport, Connection, ConnectionConfig, LauncherToMonitor, ServerTransport,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,11 +32,7 @@ pub struct TransportMonitorServer {
 }
 
 impl TransportMonitorServer {
-    pub fn new(
-        config: ConnectionConfig,
-        verbose: bool,
-        log_file: Option<PathBuf>,
-    ) -> Result<Self> {
+    pub fn new(config: ConnectionConfig, verbose: bool, log_file: Option<PathBuf>) -> Result<Self> {
         let session_manager = Arc::new(RwLock::new(SessionManager::new()));
         let connections = Arc::new(RwLock::new(HashMap::new()));
         let (ui_update_sender, _) = broadcast::channel(100);
@@ -70,11 +68,11 @@ impl TransportMonitorServer {
                         Ok(connection) => {
                             let connection_id = climonitor_shared::generate_connection_id();
                             let peer_addr = connection.peer_addr().to_string();
-                            
+
                             if self.verbose {
-                                println!("🔗 New connection: {} from {}", connection_id, peer_addr);
+                                println!("🔗 New connection: {connection_id} from {peer_addr}");
                             }
-                            
+
                             self.handle_new_connection(connection_id, connection, peer_addr).await?;
                         }
                         Err(e) => {
@@ -117,7 +115,9 @@ impl TransportMonitorServer {
             .insert(connection_id.clone(), connection_info);
 
         // 接続ハンドラータスクを開始
-        let task_handle = self.spawn_connection_handler(connection_id, connection).await;
+        let task_handle = self
+            .spawn_connection_handler(connection_id, connection)
+            .await;
         self.task_handles.push(task_handle);
 
         Ok(())
@@ -291,7 +291,7 @@ impl TransportMonitorServer {
 
         // 接続情報をクリーンアップ
         connections.write().await.remove(&connection_id);
-        
+
         // 接続終了処理
         Self::cleanup_disconnected_launcher(&connection_id, &session_manager, verbose).await;
         let _ = ui_update_sender.send(());
@@ -396,10 +396,7 @@ impl TransportMonitorServer {
     }
 
     /// サーバー終了
-    async fn shutdown(
-        &mut self,
-        server_transport: &mut ServerTransport,
-    ) -> Result<()> {
+    async fn shutdown(&mut self, server_transport: &mut ServerTransport) -> Result<()> {
         // 全タスクを終了
         for handle in self.task_handles.drain(..) {
             handle.abort();

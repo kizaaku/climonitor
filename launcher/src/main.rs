@@ -3,8 +3,8 @@ use clap::{Arg, Command};
 
 // lib crate から import
 use climonitor_launcher::cli_tool::{CliToolFactory, CliToolType};
-use climonitor_launcher::transport_client::LauncherClient;
 use climonitor_launcher::tool_wrapper::ToolWrapper;
+use climonitor_launcher::transport_client::LauncherClient;
 use climonitor_shared::Config;
 
 #[tokio::main]
@@ -59,7 +59,9 @@ async fn main() -> Result<()> {
         .map(std::path::PathBuf::from);
     let use_tcp = matches.get_flag("tcp");
     let connect_addr = matches.get_one::<String>("connect");
-    let config_path = matches.get_one::<String>("config").map(std::path::PathBuf::from);
+    let config_path = matches
+        .get_one::<String>("config")
+        .map(std::path::PathBuf::from);
     let cli_args: Vec<String> = matches
         .get_many::<String>("cli_args")
         .unwrap_or_default()
@@ -126,7 +128,7 @@ async fn main() -> Result<()> {
     let connection_config = config.to_connection_config();
 
     if verbose {
-        println!("🔧 Connection config: {:?}", connection_config);
+        println!("🔧 Connection config: {connection_config:?}");
     }
 
     // ツールを作成

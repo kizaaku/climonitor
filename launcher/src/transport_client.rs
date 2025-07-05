@@ -7,8 +7,8 @@ use tokio::task::JoinHandle;
 
 use crate::tool_wrapper::ToolWrapper;
 use climonitor_shared::{
-    generate_connection_id, Connection, ConnectionConfig, LauncherToMonitor, SessionStatus,
-    connect_client,
+    connect_client, generate_connection_id, Connection, ConnectionConfig, LauncherToMonitor,
+    SessionStatus,
 };
 
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
@@ -255,7 +255,7 @@ impl TransportLauncherClient {
         let log_file = self.log_file.clone();
         let tool_type = self.tool_wrapper.get_tool_type();
         let config = self.connection_config.clone();
-        
+
         let handle = tokio::spawn(async move {
             Self::handle_pty_bidirectional_io(
                 pty_master,
@@ -705,7 +705,9 @@ impl TransportLauncherClient {
 }
 
 // 公開インターフェース
-pub use crate::launcher_client::{create_terminal_guard_global, force_restore_terminal, TerminalGuard};
+pub use crate::launcher_client::{
+    create_terminal_guard_global, force_restore_terminal, TerminalGuard,
+};
 
 // 新しいクライアントをLauncherClientとしてエクスポート
 pub type LauncherClient = TransportLauncherClient;

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -11,7 +11,7 @@ pub enum ConnectionConfig {
         socket_path: PathBuf,
     },
     Tcp {
-        bind_addr: String, // "0.0.0.0:3001" or "localhost:3001"
+        bind_addr: String,        // "0.0.0.0:3001" or "localhost:3001"
         allowed_ips: Vec<String>, // IP許可リスト
     },
 }
@@ -59,13 +59,13 @@ impl ConnectionConfig {
                 }
 
                 let peer_ip = peer_addr.ip();
-                
+
                 for allowed_pattern in allowed_ips {
                     if is_ip_match(&peer_ip, allowed_pattern) {
                         return true;
                     }
                 }
-                
+
                 false
             }
         }
@@ -179,14 +179,14 @@ impl ServerTransport {
             }
             ServerTransport::Tcp { listener } => {
                 let (stream, addr) = listener.accept().await?;
-                
+
                 // IP許可チェック
                 if !config.is_ip_allowed(&addr) {
                     return Err(anyhow!("Connection from {} is not allowed", addr.ip()));
                 }
-                
+
                 let (reader, writer) = stream.into_split();
-                let peer_addr = format!("tcp:{}", addr);
+                let peer_addr = format!("tcp:{addr}");
 
                 Ok(Connection::Tcp {
                     reader: BufReader::new(reader),
@@ -234,7 +234,7 @@ impl ClientTransport {
                 let stream = tokio::net::TcpStream::connect(bind_addr).await?;
                 let addr = stream.peer_addr()?;
                 let (reader, writer) = stream.into_split();
-                let peer_addr = format!("tcp:{}", addr);
+                let peer_addr = format!("tcp:{addr}");
 
                 Ok(Connection::Tcp {
                     reader: BufReader::new(reader),
@@ -262,14 +262,15 @@ fn is_ip_match(ip: &IpAddr, pattern: &str) -> bool {
     if let Ok(allowed_ip) = IpAddr::from_str(pattern) {
         return *ip == allowed_ip;
     }
-    
+
     // CIDR記法のサポート
     if let Some((network, prefix_len)) = pattern.split_once('/') {
-        if let (Ok(network_ip), Ok(prefix)) = (IpAddr::from_str(network), prefix_len.parse::<u8>()) {
+        if let (Ok(network_ip), Ok(prefix)) = (IpAddr::from_str(network), prefix_len.parse::<u8>())
+        {
             return is_ip_in_network(ip, &network_ip, prefix);
         }
     }
-    
+
     // 特別なパターン
     match pattern {
         "localhost" => {
@@ -284,23 +285,31 @@ fn is_ip_match(ip: &IpAddr, pattern: &str) -> bool {
 fn is_ip_in_network(ip: &IpAddr, network: &IpAddr, prefix_len: u8) -> bool {
     match (ip, network) {
         (IpAddr::V4(ip), IpAddr::V4(net)) => {
-            if prefix_len > 32 { return false; }
-            let mask = if prefix_len == 0 { 0 } else { !((1u32 << (32 - prefix_len)) - 1) };
+            if prefix_len > 32 {
+                return false;
+            }
+            let mask = if prefix_len == 0 {
+                0
+            } else {
+                !((1u32 << (32 - prefix_len)) - 1)
+            };
             (u32::from(*ip) & mask) == (u32::from(*net) & mask)
         }
         (IpAddr::V6(ip), IpAddr::V6(net)) => {
-            if prefix_len > 128 { return false; }
+            if prefix_len > 128 {
+                return false;
+            }
             let ip_bytes = ip.octets();
             let net_bytes = net.octets();
-            
+
             let full_bytes = prefix_len / 8;
             let remaining_bits = prefix_len % 8;
-            
+
             // 完全な8ビット単位でのマッチング
             if ip_bytes[..full_bytes as usize] != net_bytes[..full_bytes as usize] {
                 return false;
             }
-            
+
             // 残りのビットでのマッチング
             if remaining_bits > 0 {
                 let mask = 0xFF << (8 - remaining_bits);
@@ -310,7 +319,7 @@ fn is_ip_in_network(ip: &IpAddr, network: &IpAddr, prefix_len: u8) -> bool {
                     return false;
                 }
             }
-            
+
             true
         }
         _ => false, // IPv4とIPv6の混在は許可しない
