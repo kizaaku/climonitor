@@ -1,7 +1,8 @@
 use clap::Parser;
 
 use climonitor_monitor::live_ui::LiveUI;
-use climonitor_monitor::monitor_server::MonitorServer;
+use climonitor_monitor::transport_server::TransportMonitorServer;
+use climonitor_shared::{Config, ConnectionConfig};
 
 #[derive(Parser)]
 #[command(name = "climonitor")]
@@ -18,27 +19,82 @@ struct Cli {
     /// Log file path to save Claude's standard output
     #[arg(long)]
     log_file: Option<std::path::PathBuf>,
+
+    /// Use TCP instead of Unix domain socket
+    #[arg(long)]
+    tcp: bool,
+
+    /// TCP bind address (only with --tcp)
+    #[arg(long, default_value = "127.0.0.1:3001")]
+    bind: String,
+
+    /// Unix socket path (default: /tmp/climonitor.sock)
+    #[arg(long)]
+    socket: Option<std::path::PathBuf>,
+
+    /// Configuration file path
+    #[arg(short, long)]
+    config: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // 設定を読み込み（優先順位: CLI > 環境変数 > 設定ファイル > デフォルト）
+    let mut config = if let Some(config_path) = &cli.config {
+        // --config で指定された設定ファイルを読み込み
+        Config::from_file(config_path)?
+    } else if let Some((config, _path)) = Config::load_auto()? {
+        // 自動検出で設定ファイルを読み込み
+        config
+    } else {
+        // デフォルト設定を使用
+        Config::default()
+    };
+
+    // 環境変数で上書き
+    config.apply_env_overrides();
+
+    // CLI引数で上書き
+    if cli.tcp {
+        config.connection.r#type = "tcp".to_string();
+        config.connection.tcp_bind_addr = cli.bind;
+    }
+    if let Some(socket_path) = cli.socket {
+        config.connection.r#type = "unix".to_string();
+        config.connection.unix_socket_path = Some(socket_path);
+    }
+    if cli.verbose {
+        config.logging.verbose = true;
+    }
+    if let Some(log_file) = cli.log_file.clone() {
+        config.logging.log_file = Some(log_file);
+    }
+
+    // 接続設定を生成
+    let connection_config = config.to_connection_config();
+
     if cli.live {
         // ライブモード：Monitor サーバーとして動作
-        run_live_mode(cli.verbose, cli.log_file).await?;
+        run_live_mode(connection_config, config.logging.verbose, config.logging.log_file).await?;
     } else {
         // デフォルト：ライブモード
-        run_live_mode(cli.verbose, cli.log_file).await?;
+        run_live_mode(connection_config, config.logging.verbose, config.logging.log_file).await?;
     }
 
     Ok(())
 }
 
 /// ライブモード実行
-async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+async fn run_live_mode(
+    config: ConnectionConfig,
+    verbose: bool,
+    log_file: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     if verbose {
         println!("🔧 Starting monitor server in verbose mode...");
+        println!("🔧 Connection config: {:?}", config);
         if let Some(ref log_path) = log_file {
             let log_display = log_path.display();
             println!("📝 Log file: {log_display}");
@@ -46,8 +102,7 @@ async fn run_live_mode(verbose: bool, log_file: Option<std::path::PathBuf>) -> a
     }
 
     // Monitor サーバー開始
-    let mut server = MonitorServer::new(verbose, log_file)?;
-    server.start().await?;
+    let mut server = TransportMonitorServer::new(config, verbose, log_file)?;
 
     // UI更新チャネル取得
     let update_receiver = server.subscribe_ui_updates();

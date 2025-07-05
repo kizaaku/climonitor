@@ -7,3 +7,4 @@ pub mod screen_claude_detector;
 pub mod screen_gemini_detector;
 pub mod state_detector;
 pub mod tool_wrapper;
+pub mod transport_client;

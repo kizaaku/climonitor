@@ -1,0 +1,25 @@
+# climonitor TCP接続用サンプル設定ファイル
+# ~/.climonitor/config.toml にコピーして使用してください
+
+[connection]
+# 接続タイプ: "tcp" または "unix"
+type = "tcp"
+
+# TCP接続時のバインドアドレス
+# monitor: このアドレスでサーバーを起動
+# launcher: このアドレスに接続
+tcp_bind_addr = "127.0.0.1:3001"
+
+# Unix socket接続時のソケットパス（tcpの場合は不要）
+# unix_socket_path = "/tmp/climonitor.sock"
+
+[logging]
+# 詳細ログを有効にするか
+verbose = false
+
+# ログファイルパス（CLIツールの出力を保存）
+# log_file = "~/.climonitor/climonitor.log"
+
+# 注意: 以下の設定は現在未実装です
+# [notification] - ~/.climonitor/notify.sh が存在する場合のみ動作
+# [ui] - ハードコードされた値を使用
