@@ -61,22 +61,6 @@ pub enum LauncherToMonitor {
         ui_above_text: Option<String>, // UI box上の⏺文字以降の具体的なテキスト
         timestamp: DateTime<Utc>,
     },
-    /// プロセス監視情報
-    ProcessMetrics {
-        launcher_id: String,
-        cpu_percent: f32,
-        memory_mb: u64,
-        child_count: u32,
-        network_active: bool,
-        timestamp: DateTime<Utc>,
-    },
-    /// 出力キャプチャ
-    OutputCapture {
-        launcher_id: String,
-        stream: String, // "stdout" or "stderr"
-        content: String,
-        timestamp: DateTime<Utc>,
-    },
     /// launcher切断
     Disconnect {
         launcher_id: String,
@@ -84,18 +68,7 @@ pub enum LauncherToMonitor {
     },
 }
 
-/// monitor → launcher へのメッセージ（将来の拡張用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MonitorToLauncher {
-    /// 接続確認
-    Ack,
-    /// 詳細情報要求
-    RequestMetrics,
-    /// シャットダウン指示
-    Shutdown,
-    /// ログファイル設定
-    SetLogFile { log_file_path: Option<PathBuf> },
-}
+// monitor → launcher へのメッセージは現在未使用（将来拡張時に追加予定）
 
 /// launcher情報
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,7 +101,6 @@ pub struct SessionInfo {
     pub tool_type: Option<CliToolType>,
     pub status: SessionStatus,
     pub previous_status: Option<SessionStatus>, // 前の状態（通知判定用）
-    pub confidence: f32,
     pub evidence: Vec<String>,
     pub last_message: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -140,16 +112,7 @@ pub struct SessionInfo {
     pub ui_above_text: Option<String>, // UI box上の⏺文字以降の具体的なテキスト
 }
 
-/// プロセス監視データ
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessMetrics {
-    pub launcher_id: String,
-    pub cpu_percent: f32,
-    pub memory_mb: u64,
-    pub child_count: u32,
-    pub network_active: bool,
-    pub timestamp: DateTime<Utc>,
-}
+// ProcessMetrics は現在未使用（将来拡張時に追加予定）
 
 /// 接続ID生成
 pub fn generate_connection_id() -> String {

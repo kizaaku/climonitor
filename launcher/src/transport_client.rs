@@ -264,7 +264,7 @@ impl TransportLauncherClient {
     ) -> Result<JoinHandle<()>> {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
-        
+
         let pty_config = PtyHandlerConfig {
             verbose: self.verbose,
             log_file: self.log_file.clone(),
@@ -338,7 +338,7 @@ impl TransportLauncherClient {
 
         // 設定値を事前にコピー（move クロージャで使用するため）
         let verbose = config.verbose;
-        
+
         // 双方向I/Oタスクを起動
         let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout_with_monitoring(

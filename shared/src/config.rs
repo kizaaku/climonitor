@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use crate::transport::ConnectionConfig;
 
 /// メインの設定構造体
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// 接続設定
     #[serde(default)]
@@ -45,8 +44,7 @@ pub struct ConnectionSettings {
 }
 
 /// ログ関連の設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LoggingSettings {
     /// 詳細ログを有効にするか
     #[serde(default)]
@@ -57,8 +55,7 @@ pub struct LoggingSettings {
 }
 
 /// 通知関連の設定（現在は実装されていない - ~/.climonitor/notify.sh が存在する場合のみ動作）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NotificationSettings {
     /// 将来の実装用プレースホルダー
     #[serde(default)]
@@ -66,14 +63,12 @@ pub struct NotificationSettings {
 }
 
 /// UI関連の設定（現在は実装されていない - ハードコードされた値を使用）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UiSettings {
     /// 将来の実装用プレースホルダー
     #[serde(default)]
     _placeholder: bool,
 }
-
 
 impl Default for ConnectionSettings {
     fn default() -> Self {
@@ -85,9 +80,6 @@ impl Default for ConnectionSettings {
         }
     }
 }
-
-
-
 
 // デフォルト値関数
 fn default_connection_type() -> String {
