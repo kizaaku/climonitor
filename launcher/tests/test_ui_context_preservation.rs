@@ -13,7 +13,7 @@ fn test_claude_ui_context_preservation() {
     // 2. コンテキスト付きの出力を処理
     let output_with_context = "● ファイルを読み込んでいます...\n";
     detector.process_output(output_with_context);
-    
+
     // コンテキストが取得できることを確認
     assert_eq!(
         detector.get_ui_above_text(),
@@ -35,7 +35,7 @@ fn test_claude_ui_context_preservation() {
     // 5. 新しいコンテキストが出現したら更新される
     let new_context_output = "● 新しいタスクを実行中...\n";
     detector.process_output(new_context_output);
-    
+
     assert_eq!(
         detector.get_ui_above_text(),
         Some("新しいタスクを実行中...".to_string())
@@ -52,7 +52,7 @@ fn test_gemini_ui_context_preservation() {
     // 2. Gemini固有のコンテキスト付き出力を処理
     let output_with_context = "✦ コードを生成しています...\n";
     detector.process_output(output_with_context);
-    
+
     // コンテキストが取得できることを確認
     assert_eq!(
         detector.get_ui_above_text(),
@@ -142,7 +142,7 @@ fn test_context_preservation_during_state_transitions() {
 
     // 状態変化を伴う出力（例：実行中状態）
     detector.process_output("esc to interrupt\n");
-    
+
     // 状態が変わってもコンテキストは保持される
     assert_eq!(
         detector.get_ui_above_text(),
@@ -151,7 +151,7 @@ fn test_context_preservation_during_state_transitions() {
 
     // 状態が戻る
     detector.process_output("プロセス完了\n");
-    
+
     // まだコンテキストは保持されている
     assert_eq!(
         detector.get_ui_above_text(),
