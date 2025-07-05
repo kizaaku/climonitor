@@ -11,6 +11,19 @@ use climonitor_shared::{
     SessionStatus,
 };
 
+/// PTY処理に必要な設定をまとめた構造体
+#[derive(Debug, Clone)]
+struct PtyHandlerConfig {
+    /// 詳細ログを有効にするか
+    verbose: bool,
+    /// ログファイルのパス
+    log_file: Option<PathBuf>,
+    /// 使用するCLIツールのタイプ
+    tool_type: crate::cli_tool::CliToolType,
+    /// monitor接続設定
+    connection_config: ConnectionConfig,
+}
+
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
 pub struct DummyTerminalGuard {
     #[allow(dead_code)]
@@ -251,20 +264,20 @@ impl TransportLauncherClient {
     ) -> Result<JoinHandle<()>> {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
-        let verbose = self.verbose;
-        let log_file = self.log_file.clone();
-        let tool_type = self.tool_wrapper.get_tool_type();
-        let config = self.connection_config.clone();
+        
+        let pty_config = PtyHandlerConfig {
+            verbose: self.verbose,
+            log_file: self.log_file.clone(),
+            tool_type: self.tool_wrapper.get_tool_type(),
+            connection_config: self.connection_config.clone(),
+        };
 
         let handle = tokio::spawn(async move {
             Self::handle_pty_bidirectional_io(
                 pty_master,
                 launcher_id,
                 session_id,
-                verbose,
-                log_file,
-                tool_type,
-                config,
+                pty_config,
                 _terminal_guard,
             )
             .await;
@@ -278,14 +291,11 @@ impl TransportLauncherClient {
         pty_master: Box<dyn MasterPty + Send>,
         launcher_id: String,
         session_id: String,
-        verbose: bool,
-        log_file: Option<PathBuf>,
-        tool_type: crate::cli_tool::CliToolType,
-        connection_config: ConnectionConfig,
+        config: PtyHandlerConfig,
         _terminal_guard: DummyTerminalGuard,
     ) {
         // ログファイルを開く
-        let log_writer = if let Some(ref log_path) = log_file {
+        let log_writer = if let Some(ref log_path) = config.log_file {
             match tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -294,7 +304,7 @@ impl TransportLauncherClient {
             {
                 Ok(file) => Some(file),
                 Err(e) => {
-                    if verbose {
+                    if config.verbose {
                         let log_display = log_path.display();
                         eprintln!("⚠️  Failed to open log file {log_display}: {e}");
                     }
@@ -309,7 +319,7 @@ impl TransportLauncherClient {
         let pty_writer = match pty_master.take_writer() {
             Ok(writer) => writer,
             Err(e) => {
-                if verbose {
+                if config.verbose {
                     eprintln!("⚠️  Failed to get PTY writer: {e}");
                 }
                 return;
@@ -319,23 +329,26 @@ impl TransportLauncherClient {
         let pty_reader = match pty_master.try_clone_reader() {
             Ok(reader) => reader,
             Err(e) => {
-                if verbose {
+                if config.verbose {
                     eprintln!("⚠️  Failed to get PTY reader: {e}");
                 }
                 return;
             }
         };
 
+        // 設定値を事前にコピー（move クロージャで使用するため）
+        let verbose = config.verbose;
+        
         // 双方向I/Oタスクを起動
         let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout_with_monitoring(
                 pty_reader,
                 launcher_id.clone(),
                 session_id.clone(),
-                verbose,
+                config.verbose,
                 log_writer,
-                tool_type,
-                connection_config,
+                config.tool_type,
+                config.connection_config,
             )
             .await;
         });
