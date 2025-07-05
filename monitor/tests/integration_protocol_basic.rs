@@ -76,44 +76,7 @@ fn test_protocol_serialization_state_update() {
     }
 }
 
-#[test]
-fn test_protocol_serialization_process_metrics() {
-    // ProcessMetrics メッセージのシリアライゼーション/デシリアライゼーションテスト
-    let launcher_id = generate_test_id();
-    let original_message =
-        create_test_launcher_message(launcher_id.clone(), TestMessageType::ProcessMetrics);
-
-    // JSONにシリアライズ
-    let json_str = serde_json::to_string(&original_message).unwrap();
-
-    // JSONからデシリアライズ
-    let deserialized_message: LauncherToMonitor = serde_json::from_str(&json_str).unwrap();
-
-    // 元のメッセージと一致することを確認
-    match (&original_message, &deserialized_message) {
-        (
-            LauncherToMonitor::ProcessMetrics {
-                launcher_id: orig_id,
-                cpu_percent: orig_cpu,
-                memory_mb: orig_mem,
-                ..
-            },
-            LauncherToMonitor::ProcessMetrics {
-                launcher_id: deser_id,
-                cpu_percent: deser_cpu,
-                memory_mb: deser_mem,
-                ..
-            },
-        ) => {
-            assert_eq!(orig_id, deser_id);
-            assert_eq!(orig_cpu, deser_cpu);
-            assert_eq!(orig_mem, deser_mem);
-            assert_eq!(*orig_cpu, 15.5);
-            assert_eq!(*orig_mem, 128);
-        }
-        _ => panic!("メッセージタイプが一致しません"),
-    }
-}
+// ProcessMetrics テストは削除済み（機能削除のため）
 
 #[test]
 fn test_protocol_serialization_disconnect() {

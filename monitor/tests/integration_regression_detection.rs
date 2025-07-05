@@ -127,15 +127,14 @@ fn test_message_type_structure_stability() {
         create_test_launcher_message(test_launcher_id.clone(), TestMessageType::Register);
     let state_msg =
         create_test_launcher_message(test_launcher_id.clone(), TestMessageType::StatusUpdate);
-    let metrics_msg =
-        create_test_launcher_message(test_launcher_id.clone(), TestMessageType::ProcessMetrics);
+    // ProcessMetrics は削除済み
     let disconnect_msg =
         create_test_launcher_message(test_launcher_id.clone(), TestMessageType::Disconnect);
 
     // 各メッセージがシリアライズ可能であることを確認
     assert!(serde_json::to_string(&connect_msg).is_ok());
     assert!(serde_json::to_string(&state_msg).is_ok());
-    assert!(serde_json::to_string(&metrics_msg).is_ok());
+    // metrics_msg は削除済み
     assert!(serde_json::to_string(&disconnect_msg).is_ok());
 
     // 必須フィールドが存在することを確認
@@ -175,7 +174,7 @@ fn test_timestamp_field_presence() {
     let messages = vec![
         create_test_launcher_message(test_launcher_id.clone(), TestMessageType::Register),
         create_test_launcher_message(test_launcher_id.clone(), TestMessageType::StatusUpdate),
-        create_test_launcher_message(test_launcher_id.clone(), TestMessageType::ProcessMetrics),
+        // ProcessMetrics は削除済み
         create_test_launcher_message(test_launcher_id.clone(), TestMessageType::Disconnect),
     ];
 
@@ -190,13 +189,10 @@ fn test_timestamp_field_presence() {
             LauncherToMonitor::StateUpdate { .. } => {
                 assert!(json_value["StateUpdate"]["timestamp"].is_string());
             }
-            LauncherToMonitor::ProcessMetrics { .. } => {
-                assert!(json_value["ProcessMetrics"]["timestamp"].is_string());
-            }
+            // ProcessMetrics は削除済み
             LauncherToMonitor::Disconnect { .. } => {
                 assert!(json_value["Disconnect"]["timestamp"].is_string());
-            }
-            _ => panic!("予期しないメッセージタイプ"),
+            } // ProcessMetrics削除により到達不可能
         }
     }
 }

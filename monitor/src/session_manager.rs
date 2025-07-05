@@ -1,6 +1,6 @@
 use chrono::Utc;
 use climonitor_shared::{
-    LauncherInfo, LauncherStatus, LauncherToMonitor, ProcessMetrics, SessionInfo, SessionStatus,
+    LauncherInfo, LauncherStatus, LauncherToMonitor, SessionInfo, SessionStatus,
 };
 use std::collections::HashMap;
 
@@ -8,7 +8,6 @@ use std::collections::HashMap;
 pub struct SessionManager {
     launchers: HashMap<String, LauncherInfo>,
     sessions: HashMap<String, SessionInfo>,
-    process_metrics: HashMap<String, ProcessMetrics>,
 }
 
 impl Default for SessionManager {
@@ -22,7 +21,6 @@ impl SessionManager {
         Self {
             launchers: HashMap::new(),
             sessions: HashMap::new(),
-            process_metrics: HashMap::new(),
         }
     }
 
@@ -42,8 +40,7 @@ impl SessionManager {
         // launcher削除
         let launcher = self.launchers.remove(launcher_id);
 
-        // 関連プロセス情報削除
-        self.process_metrics.remove(launcher_id);
+        // process_metrics フィールドは削除済み
 
         // 関連セッションを完全削除
         self.sessions
@@ -65,11 +62,7 @@ impl SessionManager {
         self.sessions.insert(session.id.clone(), session);
     }
 
-    /// プロセス情報更新
-    pub fn update_process_metrics(&mut self, metrics: ProcessMetrics) {
-        self.process_metrics
-            .insert(metrics.launcher_id.clone(), metrics);
-    }
+    // update_process_metrics は削除済み
 
     /// メッセージ処理
     pub fn handle_message(&mut self, message: LauncherToMonitor) -> Result<(), String> {
@@ -133,7 +126,7 @@ impl SessionManager {
                     tool_type,
                     status,
                     previous_status: existing_session.as_ref().map(|s| s.status.clone()),
-                    confidence: 1.0,                 // 簡易実装では固定値
+                    // confidence フィールドは削除済み
                     evidence: Vec::new(),            // 簡易実装では空
                     last_message: None,              // 簡易実装では空
                     launcher_context: None,          // 簡易実装では空
@@ -149,33 +142,9 @@ impl SessionManager {
                 Ok(())
             }
 
-            LauncherToMonitor::ProcessMetrics {
-                launcher_id,
-                cpu_percent,
-                memory_mb,
-                child_count,
-                network_active,
-                timestamp,
-            } => {
-                let metrics = ProcessMetrics {
-                    launcher_id: launcher_id.clone(),
-                    cpu_percent,
-                    memory_mb,
-                    child_count,
-                    network_active,
-                    timestamp,
-                };
+            // ProcessMetrics は削除済み
 
-                self.update_process_metrics(metrics);
-                self.update_launcher_activity(&launcher_id);
-                Ok(())
-            }
-
-            LauncherToMonitor::OutputCapture { launcher_id, .. } => {
-                self.update_launcher_activity(&launcher_id);
-                Ok(())
-            }
-
+            // OutputCapture は削除済み
             LauncherToMonitor::Disconnect { launcher_id, .. } => {
                 self.remove_launcher(&launcher_id);
                 Ok(())

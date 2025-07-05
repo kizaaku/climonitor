@@ -33,12 +33,9 @@ pub fn create_test_launcher_message(
             ui_above_text: Some("test UI text".to_string()),
             timestamp: Utc::now(),
         },
-        TestMessageType::ProcessMetrics => LauncherToMonitor::ProcessMetrics {
-            launcher_id: launcher_id.clone(),
-            cpu_percent: 15.5,
-            memory_mb: 128,
-            child_count: 2,
-            network_active: true,
+        // ProcessMetrics は削除済み
+        TestMessageType::ProcessMetrics => LauncherToMonitor::Disconnect {
+            launcher_id,
             timestamp: Utc::now(),
         },
         TestMessageType::Disconnect => LauncherToMonitor::Disconnect {
@@ -52,7 +49,7 @@ pub fn create_test_launcher_message(
 pub enum TestMessageType {
     Register,
     StatusUpdate,
-    ProcessMetrics,
+    ProcessMetrics, // 削除済み機能だが、後方互換性のため維持
     Disconnect,
 }
 
@@ -84,7 +81,7 @@ pub fn create_test_session_info(launcher_id: String, status: SessionStatus) -> S
         tool_type: Some(CliToolType::Claude),
         status,
         previous_status: None,
-        confidence: 0.9,
+        // confidence フィールドは削除済み
         evidence: vec!["test evidence".to_string()],
         last_message: Some("test message".to_string()),
         created_at: Utc::now(),
