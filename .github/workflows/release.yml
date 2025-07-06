@@ -28,11 +28,7 @@ jobs:
             binary_ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset_name: climonitor-windows-x86_64-msvc
-            binary_ext: ".exe"
-          - os: windows-latest
-            target: x86_64-pc-windows-gnu
-            asset_name: climonitor-windows-x86_64-gnu
+            asset_name: climonitor-windows-x86_64
             binary_ext: ".exe"
 
     steps:
