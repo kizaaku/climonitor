@@ -377,9 +377,13 @@ impl TransportLauncherClient {
     ) -> Result<portable_pty::ExitStatus> {
         #[cfg(unix)]
         {
-            let mut sigwinch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
-            let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
-            let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+            let mut sigwinch =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+                    .unwrap();
+            let mut sigint =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
 
             loop {
                 tokio::select! {
@@ -411,7 +415,7 @@ impl TransportLauncherClient {
                 }
             }
         }
-        
+
         #[cfg(not(unix))]
         {
             loop {
@@ -711,56 +715,49 @@ impl TransportLauncherClient {
 // Drop実装を削除し、明示的な切断処理に依存
 // （run_claude関数内で既に適切に切断メッセージが送信されている）
 
-/// ターミナル状態の自動復元ガード
-#[cfg(unix)]
+/// ターミナル状態の自動復元ガード（クロスプラットフォーム対応）
 pub struct TerminalGuard {
+    verbose: bool,
+    #[cfg(unix)]
     fd: i32,
+    #[cfg(unix)]
     original: nix::sys::termios::Termios,
-    verbose: bool,
-}
-
-#[cfg(not(unix))]
-pub struct TerminalGuard {
-    verbose: bool,
     #[cfg(windows)]
     original_mode: Option<u32>,
 }
 
-#[cfg(unix)]
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        use std::os::fd::BorrowedFd;
+        #[cfg(unix)]
+        {
+            use std::os::fd::BorrowedFd;
 
-        // ターミナルかどうかチェック
-        if !nix::unistd::isatty(self.fd).unwrap_or(false) {
-            if self.verbose {
-                eprintln!("🔓 Terminal guard dropped (non-TTY)");
+            // ターミナルかどうかチェック
+            if !nix::unistd::isatty(self.fd).unwrap_or(false) {
+                if self.verbose {
+                    eprintln!("🔓 Terminal guard dropped (non-TTY)");
+                }
+                return;
             }
-            return;
-        }
 
-        if self.verbose {
-            eprintln!("🔓 Restoring terminal settings");
-        }
-
-        // SAFETY: fd は有効なファイルディスクリプタです
-        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
-
-        if let Err(e) = nix::sys::termios::tcsetattr(
-            borrowed_fd,
-            nix::sys::termios::SetArg::TCSANOW,
-            &self.original,
-        ) {
             if self.verbose {
-                eprintln!("⚠️  Failed to restore terminal: {e}");
+                eprintln!("🔓 Restoring terminal settings");
+            }
+
+            // SAFETY: fd は有効なファイルディスクリプタです
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
+
+            if let Err(e) = nix::sys::termios::tcsetattr(
+                borrowed_fd,
+                nix::sys::termios::SetArg::TCSANOW,
+                &self.original,
+            ) {
+                if self.verbose {
+                    eprintln!("⚠️  Failed to restore terminal: {e}");
+                }
             }
         }
-    }
-}
 
-#[cfg(not(unix))]
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
         #[cfg(windows)]
         {
             use std::ptr;
@@ -799,57 +796,64 @@ impl Drop for TerminalGuard {
     }
 }
 
-/// グローバル用のターミナルガード作成関数（main関数で使用）
-#[cfg(unix)]
+/// グローバル用のターミナルガード作成関数（クロスプラットフォーム対応）
 pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGuard> {
-    use std::os::fd::BorrowedFd;
-    use std::os::unix::io::AsRawFd;
+    #[cfg(unix)]
+    {
+        use std::os::fd::BorrowedFd;
+        use std::os::unix::io::AsRawFd;
 
-    let stdin_fd = std::io::stdin().as_raw_fd();
+        let stdin_fd = std::io::stdin().as_raw_fd();
 
-    // stdinがターミナルかどうかチェック
-    if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
-        if verbose {
-            eprintln!("🔒 Terminal guard created (non-TTY mode)");
+        // stdinがターミナルかどうかチェック
+        if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+            if verbose {
+                eprintln!("🔒 Terminal guard created (non-TTY mode)");
+            }
+            // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
+            let dummy_termios = unsafe { std::mem::zeroed() };
+            return Ok(TerminalGuard {
+                verbose,
+                #[cfg(unix)]
+                fd: stdin_fd,
+                #[cfg(unix)]
+                original: dummy_termios,
+                #[cfg(windows)]
+                original_mode: None,
+            });
         }
-        // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
-        let dummy_termios = unsafe { std::mem::zeroed() };
-        return Ok(TerminalGuard {
-            fd: stdin_fd,
-            original: dummy_termios,
+
+        // SAFETY: stdin_fd は有効なファイルディスクリプタです
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+
+        let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
+            .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
+
+        // ターミナルをrawモードに設定
+        let mut raw_termios = original_termios.clone();
+        nix::sys::termios::cfmakeraw(&mut raw_termios);
+        nix::sys::termios::tcsetattr(
+            borrowed_fd,
+            nix::sys::termios::SetArg::TCSANOW,
+            &raw_termios,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
+
+        if verbose {
+            eprintln!("🔒 Terminal guard created with raw mode");
+        }
+
+        Ok(TerminalGuard {
             verbose,
-        });
+            #[cfg(unix)]
+            fd: stdin_fd,
+            #[cfg(unix)]
+            original: original_termios,
+            #[cfg(windows)]
+            original_mode: None,
+        })
     }
 
-    // SAFETY: stdin_fd は有効なファイルディスクリプタです
-    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
-
-    let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
-        .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
-
-    // ターミナルをrawモードに設定
-    let mut raw_termios = original_termios.clone();
-    nix::sys::termios::cfmakeraw(&mut raw_termios);
-    nix::sys::termios::tcsetattr(
-        borrowed_fd,
-        nix::sys::termios::SetArg::TCSANOW,
-        &raw_termios,
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
-
-    if verbose {
-        eprintln!("🔒 Terminal guard created with raw mode");
-    }
-
-    Ok(TerminalGuard {
-        fd: stdin_fd,
-        original: original_termios,
-        verbose,
-    })
-}
-
-#[cfg(not(unix))]
-pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGuard> {
     #[cfg(windows)]
     {
         use std::ptr;
@@ -902,15 +906,18 @@ pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGua
                 );
             }
 
-            return Ok(TerminalGuard {
+            Ok(TerminalGuard {
                 verbose,
                 original_mode: Some(original_mode),
-            });
+            })
         }
     }
 
-    #[cfg(not(windows))]
-    Ok(TerminalGuard { verbose })
+    #[cfg(not(any(unix, windows)))]
+    {
+        // 他のプラットフォーム（将来的なサポート）
+        Ok(TerminalGuard { verbose })
+    }
 }
 
 /// 強制的にターミナル設定を復元する関数（緊急時用）

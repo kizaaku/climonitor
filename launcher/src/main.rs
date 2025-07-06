@@ -162,14 +162,15 @@ async fn main() -> Result<()> {
         None
     };
 
-    // SIGINT/SIGTERM ハンドラーを設定してターミナル復元を保証
+    // クロスプラットフォーム対応のシグナルハンドリング
+    #[cfg(unix)]
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    #[cfg(unix)]
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    // プラットフォーム固有のシグナルハンドリング
     #[cfg(unix)]
     {
-        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-
-        // CLI ツール プロセス実行をシグナル処理と並行して実行
         tokio::select! {
             result = launcher.run_claude() => {
                 match result {
@@ -180,13 +181,10 @@ async fn main() -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("❌ CLI tool execution failed: {e}");
-                        #[cfg(unix)]
-                        {
-                            if let Some(guard) = _terminal_guard {
-                                drop(guard); // ターミナル設定を明示的に復元
-                            }
-                            climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                        if let Some(guard) = _terminal_guard {
+                            drop(guard); // ターミナル設定を明示的に復元
                         }
+                        climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
                         std::process::exit(1);
                     }
                 }
@@ -195,34 +193,37 @@ async fn main() -> Result<()> {
                 if config.logging.verbose {
                     println!("\n🛑 Received SIGINT, shutting down gracefully...");
                 }
-                #[cfg(unix)]
-                {
-                    if let Some(guard) = _terminal_guard {
-                        drop(guard); // ターミナル設定を明示的に復元
-                    }
-                    climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                if let Some(guard) = _terminal_guard {
+                    drop(guard); // ターミナル設定を明示的に復元
                 }
+                climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
                 std::process::exit(130); // 128 + 2 (SIGINT)
             }
             _ = sigterm.recv() => {
                 if config.logging.verbose {
                     println!("\n🛑 Received SIGTERM, shutting down gracefully...");
                 }
-                #[cfg(unix)]
-                {
-                    if let Some(guard) = _terminal_guard {
-                        drop(guard); // ターミナル設定を明示的に復元
-                    }
-                    climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                if let Some(guard) = _terminal_guard {
+                    drop(guard); // ターミナル設定を明示的に復元
                 }
+                climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
                 std::process::exit(143); // 128 + 15 (SIGTERM)
+            }
+            _ = tokio::signal::ctrl_c() => {
+                if config.logging.verbose {
+                    println!("\n🛑 Received Ctrl+C, shutting down gracefully...");
+                }
+                if let Some(guard) = _terminal_guard {
+                    drop(guard); // ターミナル設定を明示的に復元
+                }
+                climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                std::process::exit(130); // 128 + 2 (SIGINT)
             }
         }
     }
 
     #[cfg(not(unix))]
     {
-        // Windows環境でのCtrl+Cハンドリング
         tokio::select! {
             result = launcher.run_claude() => {
                 match result {

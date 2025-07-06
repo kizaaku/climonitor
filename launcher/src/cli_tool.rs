@@ -65,16 +65,10 @@ pub fn setup_common_pty_environment(cmd: &mut CommandBuilder) {
     cmd.env("FORCE_COLOR", "1");
 }
 
-/// Windows用PTY設定を改善する関数
-#[cfg(windows)]
+/// クロスプラットフォーム対応のPTYシステム作成
 pub fn create_optimized_pty_system() -> Box<dyn portable_pty::PtySystem + Send> {
-    // Windows ConPTYの設定を最適化
-    // portable-pty 0.9.0では内部的にPSEUDOCONSOLE_INHERIT_CURSORが使用されている可能性があります
-    portable_pty::native_pty_system()
-}
-
-#[cfg(not(windows))]
-pub fn create_optimized_pty_system() -> Box<dyn portable_pty::PtySystem + Send> {
+    // portable-ptyが全プラットフォームで適切なPTY実装を提供
+    // Windows: ConPTY, Unix: 従来のPTY/pseudoterminal
     portable_pty::native_pty_system()
 }
 
