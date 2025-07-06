@@ -17,13 +17,13 @@ impl NotificationManager {
     fn find_notification_script() -> Option<PathBuf> {
         if let Some(home) = home::home_dir() {
             let climonitor_dir = home.join(".climonitor");
-            
+
             // プラットフォーム固有のスクリプトを検索
             #[cfg(windows)]
             let script_name = "notify.ps1";
             #[cfg(not(windows))]
             let script_name = "notify.sh";
-            
+
             let script = climonitor_dir.join(script_name);
             if script.exists() && script.is_file() {
                 return Some(script);
@@ -70,7 +70,7 @@ impl NotificationManager {
                 .arg(&duration)
                 .output()
                 .await;
-                
+
             #[cfg(not(windows))]
             let result = Command::new("sh")
                 .arg(&script_path)
