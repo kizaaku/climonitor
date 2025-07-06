@@ -186,28 +186,53 @@ climonitor では状態変化時にカスタムスクリプトを実行できま
 
 ### 設定方法
 
+**Unix系（Linux/macOS）:**
 1. **設定ディレクトリの作成**
 ```bash
-mkdir -p ~/.config/climonitor
+mkdir -p ~/.climonitor
 ```
 
 2. **通知スクリプトの作成**
-`~/.config/climonitor/notify.sh` を作成します。
+`~/.climonitor/notify.sh` を作成します。
 
 3. **実行権限の設定**
 ```bash
-chmod +x ~/.config/climonitor/notify.sh
+chmod +x ~/.climonitor/notify.sh
+```
+
+**Windows:**
+1. **設定ディレクトリの作成**
+```powershell
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.climonitor" -Force
+```
+
+2. **通知スクリプトの作成**
+`$env:USERPROFILE\.climonitor\notify.ps1` を作成します。
+
+3. **PowerShell実行ポリシーの確認**
+```powershell
+# 現在のポリシーを確認
+Get-ExecutionPolicy -Scope CurrentUser
+
+# 必要に応じて設定（RemoteSignedまたはUnrestricted）
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
 ### スクリプトの引数
 
 通知スクリプトには以下の引数が渡されます：
 
+**Unix系:**
 ```bash
 notify.sh <event_type> <tool_name> <message> <duration>
 ```
 
-- `event_type`: イベント種別（`waiting`, `error`, `completed`）
+**Windows:**
+```powershell
+notify.ps1 -EventType <event_type> -ToolName <tool_name> -Message <message> -Duration <duration>
+```
+
+- `event_type`: イベント種別（`waiting_for_input`, `error`, `completed`, `status_change`）
 - `tool_name`: ツール名（`claude` または `gemini`）
 - `message`: メッセージ内容
 - `duration`: 実行時間（例：`30s`）
@@ -254,6 +279,59 @@ case "$status" in
 esac
 ```
 
+**Windows（Toast通知）:**
+```powershell
+# PowerShell Notification Script for climonitor
+# ~/.climonitor/notify.ps1
+
+param(
+    [string]$EventType,
+    [string]$ToolName, 
+    [string]$Message,
+    [string]$Duration
+)
+
+# ログファイルに記録
+$LogFile = "$env:USERPROFILE\.climonitor\notifications.log"
+$LogDir = Split-Path $LogFile -Parent
+if (-not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+
+$LogEntry = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - event_type=$EventType, tool=$ToolName, message=$Message, duration=$Duration"
+Add-Content -Path $LogFile -Value $LogEntry
+
+# Windows Toast通知関数
+function Show-ToastNotification {
+    param([string]$Title, [string]$Body)
+    
+    try {
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        $Template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+        $RawXml = [xml] $Template.GetXml()
+        ($RawXml.toast.visual.binding.text | Where-Object {$_.id -eq "1"}).AppendChild($RawXml.CreateTextNode($Title)) | Out-Null
+        ($RawXml.toast.visual.binding.text | Where-Object {$_.id -eq "2"}).AppendChild($RawXml.CreateTextNode($Body)) | Out-Null
+        
+        $SerializedXml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $SerializedXml.LoadXml($RawXml.OuterXml)
+        $Toast = [Windows.UI.Notifications.ToastNotification]::new($SerializedXml)
+        $Notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("climonitor")
+        $Notifier.Show($Toast)
+    }
+    catch {
+        Write-Host "Toast notification failed: $Title - $Body"
+    }
+}
+
+# イベントタイプに応じた通知
+switch ($EventType) {
+    "waiting_for_input" { Show-ToastNotification -Title "$ToolName が入力待ち" -Body $Message }
+    "error" { Show-ToastNotification -Title "$ToolName エラー" -Body "エラーが発生しました: $Message" }
+    "completed" { Show-ToastNotification -Title "$ToolName 完了" -Body $Message }
+    default { Show-ToastNotification -Title "climonitor" -Body "$ToolName: $Message" }
+}
+```
+
 **Slack通知（webhook）:**
 ```bash
 #!/bin/bash
@@ -277,15 +355,17 @@ esac
 
 ### 通知のトラブルシューティング
 
+**Unix系（Linux/macOS）:**
+
 1. **スクリプトが実行されない**
-   - 実行権限を確認: `ls -la ~/.config/climonitor/notify.sh`
+   - 実行権限を確認: `ls -la ~/.climonitor/notify.sh`
    - ファイルパスが正しいか確認
 
 2. **通知が表示されない**
    - スクリプト内でログ出力を追加してテスト
    - 手動でスクリプトを実行してテスト:
      ```bash
-     ~/.config/climonitor/notify.sh waiting claude "Allow execution? (y/n)" 30
+     ~/.climonitor/notify.sh waiting_for_input claude "Allow execution? (y/n)" 30s
      ```
 
 3. **環境変数が必要な場合**
@@ -295,6 +375,32 @@ esac
    export PATH="/usr/local/bin:$PATH"
    export HOME="/Users/yourusername"
    ```
+
+**Windows:**
+
+1. **PowerShell実行ポリシーエラー**
+   ```powershell
+   # 現在のポリシーを確認
+   Get-ExecutionPolicy -Scope CurrentUser
+   
+   # RemoteSignedに設定
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+2. **スクリプトが見つからない**
+   - ファイルパスを確認: `Test-Path "$env:USERPROFILE\.climonitor\notify.ps1"`
+   - ディレクトリ作成: `New-Item -ItemType Directory -Path "$env:USERPROFILE\.climonitor" -Force`
+
+3. **通知が表示されない**
+   - 手動でスクリプトを実行してテスト:
+     ```powershell
+     & "$env:USERPROFILE\.climonitor\notify.ps1" -EventType "waiting_for_input" -ToolName "claude" -Message "Allow execution? (y/n)" -Duration "30s"
+     ```
+   - 通知ログを確認: `Get-Content "$env:USERPROFILE\.climonitor\notifications.log"`
+
+4. **Toast通知が動作しない**
+   - Windows 10/11の通知設定を確認
+   - アプリの通知許可を確認（設定 > システム > 通知とアクション）
 
 ## コマンドオプション
 

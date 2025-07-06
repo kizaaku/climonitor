@@ -13,10 +13,18 @@ impl NotificationManager {
         Self { script_path }
     }
 
-    /// ~/.climonitor/notify.sh を探す
+    /// 通知スクリプトを探す (プラットフォーム固有)
     fn find_notification_script() -> Option<PathBuf> {
         if let Some(home) = home::home_dir() {
-            let script = home.join(".climonitor").join("notify.sh");
+            let climonitor_dir = home.join(".climonitor");
+            
+            // プラットフォーム固有のスクリプトを検索
+            #[cfg(windows)]
+            let script_name = "notify.ps1";
+            #[cfg(not(windows))]
+            let script_name = "notify.sh";
+            
+            let script = climonitor_dir.join(script_name);
             if script.exists() && script.is_file() {
                 return Some(script);
             }
@@ -49,6 +57,21 @@ impl NotificationManager {
         let duration = duration.to_string();
 
         tokio::spawn(async move {
+            // プラットフォーム固有の実行コマンド
+            #[cfg(windows)]
+            let result = Command::new("powershell")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-File")
+                .arg(&script_path)
+                .arg(&event_type)
+                .arg(&tool)
+                .arg(&message)
+                .arg(&duration)
+                .output()
+                .await;
+                
+            #[cfg(not(windows))]
             let result = Command::new("sh")
                 .arg(&script_path)
                 .arg(&event_type)
