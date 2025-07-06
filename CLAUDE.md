@@ -4,6 +4,8 @@
 
 ## 🚀 クイックスタート
 
+### 基本セットアップ（Unix Socket）
+
 ```bash
 # 1. プロジェクトをビルド
 cargo build --release
@@ -13,6 +15,20 @@ climonitor-launcher claude
 
 # 3. ターミナル2: リアルタイム状態表示
 climonitor --live
+```
+
+### 設定ファイル使用
+
+```bash
+# 1. 設定ファイル作成
+cp examples/config-tcp.toml ~/.climonitor/config.toml
+
+# 2. 設定ファイルでサーバー起動
+climonitor --config ~/.climonitor/config.toml --live
+
+# 3. 環境変数でClaude起動
+export CLIMONITOR_TCP_ADDR="127.0.0.1:3001"
+climonitor-launcher claude
 ```
 
 ## 📋 よく使うコマンド
@@ -25,9 +41,15 @@ cargo build --release
 # 開発実行（monitor serverを起動）
 cargo run --bin climonitor -- --live
 
+# 設定ファイル付きでサーバー起動
+cargo run --bin climonitor -- --config examples/config-tcp.toml --live
+
 # launcherの実行
 cargo run --bin climonitor-launcher -- claude
 cargo run --bin climonitor-launcher -- gemini
+
+# 設定ファイル付きでlauncher実行
+cargo run --bin climonitor-launcher -- --config ~/.climonitor/config.toml claude
 ```
 
 ### デバッグ
@@ -131,6 +153,24 @@ export LANG=ja_JP.UTF-8
 export LC_ALL=ja_JP.UTF-8
 ```
 
+**4. 設定ファイル関連エラー**
+```bash
+# 設定ファイルパスを確認
+climonitor --verbose --config ~/.climonitor/config.toml
+
+# 設定の検証
+cat ~/.climonitor/config.toml
+```
+
+**5. TCP接続エラー**
+```bash
+# IP許可リスト確認
+grep tcp_allowed_ips ~/.climonitor/config.toml
+
+# 接続ログ確認
+climonitor --verbose --tcp --bind 0.0.0.0:3001
+```
+
 ### デバッグログの見方
 - `📺 [SCREEN]`: 画面バッファの状態
 - `📦 [UI_BOX]`: UIボックス検出
@@ -165,8 +205,10 @@ cargo test
 ## 📚 関連ドキュメント
 
 - **README.md**: プロジェクト概要と詳細仕様
+- **docs/configuration.md**: 設定ファイルリファレンス
 - **docs/code-structure.md**: コード構造とファイル依存関係
 - **docs/state-detectors.md**: 状態検出ロジックの詳細
+- **examples/**: 設定ファイルサンプル
 
 ## 🎯 Claude Code向けアドバイス
 

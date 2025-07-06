@@ -13,9 +13,13 @@ climonitor は Claude Code と Gemini CLI の実行状態をリアルタイム�
 - **複数セッション対応**: 複数のCLIツールを同時監視
 - **プロジェクト別表示**: ディレクトリごとにセッションをグループ化
 - **状態変化通知**: カスタマイズ可能な通知システム
+- **設定ファイル対応**: TOML形式の設定ファイルで詳細設定
+- **TCP/Unix通信**: ローカル・リモート両対応、IP制限によるセキュリティ
 - **ロケール対応**: 日本語/英語環境に対応した時刻表示
 
 ## クイックスタート
+
+### 基本セットアップ（Unix Socket）
 
 ```bash
 # 1. ビルド
@@ -29,6 +33,20 @@ cargo build --release
 
 # 4. ターミナル3: Gemini を監視付きで起動（オプション）
 ./target/release/climonitor-launcher gemini
+```
+
+### TCP接続セットアップ（リモート監視）
+
+```bash
+# 1. 設定ファイル作成
+cp examples/config-tcp.toml ~/.climonitor/config.toml
+
+# 2. 監視サーバー起動（TCP）
+./target/release/climonitor --tcp --bind 0.0.0.0:3001
+
+# 3. リモートからClaude起動
+export CLIMONITOR_TCP_ADDR="192.168.1.100:3001"
+./target/release/climonitor-launcher claude
 ```
 
 ## 監視画面
@@ -53,6 +71,75 @@ cargo build --release
 ### ツールアイコン
 - **🤖 Claude Code**: Claude セッション
 - **✨ Gemini CLI**: Gemini セッション
+
+## 設定ファイル
+
+climonitor は TOML 形式の設定ファイルで詳細な設定が可能です。
+
+### 設定ファイルの場所（優先度順）
+1. `./climonitor/config.toml` （カレントディレクトリ）
+2. `~/.climonitor/config.toml` （ホームディレクトリ）
+3. `~/.config/climonitor/config.toml` （XDG設定ディレクトリ）
+
+### 基本設定例
+
+```toml
+[connection]
+# 接続タイプ: "unix" または "tcp"
+type = "tcp"
+
+# TCP接続時のバインドアドレス
+tcp_bind_addr = "127.0.0.1:3001"
+
+# TCP接続時のIP許可リスト（セキュリティ機能）
+tcp_allowed_ips = ["127.0.0.1", "192.168.1.0/24", "localhost"]
+
+# Unix socket接続時のソケットパス
+# unix_socket_path = "/tmp/climonitor.sock"
+
+[logging]
+# 詳細ログを有効にするか
+verbose = true
+
+# ログファイルパス（CLIツールの出力を保存）
+log_file = "~/.climonitor/climonitor.log"
+```
+
+### 設定の優先順位
+1. **CLI引数** （最優先）
+2. **環境変数**
+3. **設定ファイル**
+4. **デフォルト値** （最低優先）
+
+### 主な環境変数
+- `CLIMONITOR_TCP_ADDR`: TCP接続アドレス
+- `CLIMONITOR_SOCKET_PATH`: Unix socketパス
+- `CLIMONITOR_VERBOSE`: 詳細ログ有効化
+- `CLIMONITOR_LOG_FILE`: ログファイルパス
+
+## マルチマシン構成
+
+### リモート監視の設定
+
+**サーバーマシン（Monitor）:**
+```bash
+# TCP接続でIP制限付きサーバー起動
+climonitor --config examples/config-remote.toml --live
+```
+
+**クライアントマシン（Launcher）:**
+```bash
+# リモートサーバーに接続してClaude起動
+export CLIMONITOR_TCP_ADDR="192.168.1.100:3001"
+climonitor-launcher claude
+```
+
+### セキュリティ考慮事項
+
+- **IP許可リスト**: TCP接続時は必ずIP制限を設定
+- **ローカル優先**: 可能な限りUnix socketを使用
+- **ファイアウォール**: 適切なポート制限を設定
+- **接続ログ**: `--verbose` でアクセス状況を監視
 
 ## 通知システム
 
@@ -177,9 +264,14 @@ esac
 climonitor [OPTIONS]
 
 OPTIONS:
-    --live          ライブ監視モード（デフォルト）
-    --verbose       詳細ログ出力
-    --help          ヘルプ表示
+    --live                 ライブ監視モード（デフォルト）
+    --verbose              詳細ログ出力
+    --tcp                  TCP接続を使用
+    --bind <ADDR>          TCP バインドアドレス（デフォルト: 127.0.0.1:3001）
+    --socket <PATH>        Unix socketパス
+    --config <FILE>        設定ファイルパス
+    --log-file <FILE>      ログファイルパス
+    --help                 ヘルプ表示
 ```
 
 ### climonitor-launcher (CLIラッパー)
@@ -190,8 +282,12 @@ ARGS:
     <TOOL>          起動するツール (claude | gemini)
 
 OPTIONS:
-    --verbose       詳細ログ出力
-    --help          ヘルプ表示
+    --verbose              詳細ログ出力
+    --tcp                  TCP接続を使用
+    --connect <ADDR>       接続アドレス（TCP: host:port, Unix: パス）
+    --config <FILE>        設定ファイルパス
+    --log-file <FILE>      ログファイルパス
+    --help                 ヘルプ表示
 ```
 
 ## 開発・デバッグ
@@ -224,6 +320,8 @@ RUST_LOG=debug climonitor --live --verbose 2> monitor.log
 - **Monitor**: セッション状態を管理し、ライブUIを提供
 - **Launcher**: CLIツールをPTYでラップし、状態検出を実行
 - **Protocol**: Monitor と Launcher 間の通信プロトコル
+- **Transport**: Unix Socket / TCP 通信レイヤー（IP制限対応）
+- **Config**: TOML設定ファイル管理（優先度制御）
 
 ### 主な依存関係
 - **tokio** - 非同期ランタイム
@@ -231,7 +329,10 @@ RUST_LOG=debug climonitor --live --verbose 2> monitor.log
 - **vte** - 端末パーサー
 - **chrono** - 日時処理（ロケール対応）
 - **serde** - JSON解析
+- **toml** - TOML設定ファイル解析
 - **unicode-width** - Unicode文字幅計算
+- **home** - ホームディレクトリ取得
+- **cidr** - IPアドレス範囲処理
 
 ### 対応プラットフォーム
 - macOS

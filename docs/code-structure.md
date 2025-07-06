@@ -24,6 +24,28 @@ climonitor/
   - `MonitorToLauncher` - monitor → launcher メッセージ（将来拡張用）
   - `SessionStatus` - セッション状態（Connected, Idle, Busy, WaitingInput, Completed, Error）
 
+### src/config.rs
+- **責務**: TOML設定ファイル管理、設定優先度制御
+- **主要構造体**:
+  - `Config` - メイン設定構造体
+  - `ConnectionSettings` - 接続設定（TCP/Unix, IP許可リスト）
+  - `LoggingSettings` - ログ設定
+- **主要関数**:
+  - `from_file()` - 設定ファイル読み込み
+  - `load_auto()` - 自動検出で設定読み込み
+  - `apply_env_overrides()` - 環境変数での上書き
+  - `to_connection_config()` - TransportConfig変換
+
+### src/transport.rs
+- **責務**: 通信レイヤー抽象化、TCP/Unix Socket統合
+- **主要型**:
+  - `ConnectionConfig` - 接続設定（TCP/Unix）
+  - `Connection` - 統一接続インターフェース
+- **主要関数**:
+  - `connect_client()` - クライアント接続
+  - `listen_server()` - サーバーリッスン
+  - `is_ip_allowed()` - IP許可リスト検証
+
 ### src/cli_tool.rs
 - **責務**: CLIツール種別定義
 - **主要型**: `CliToolType` (Claude, Gemini)
@@ -136,18 +158,25 @@ climonitor/
 
 ## データフロー
 
-### 1. 起動フロー
+### 1. 設定読み込みフロー
 ```
-1. climonitor --live → MonitorServer起動 → Unix Socket待機
-2. climonitor-launcher claude → LauncherClient起動 → Socket接続
+CLI引数 → 環境変数 → 設定ファイル自動検出 → デフォルト値
+              ↓
+        Config構造体 → ConnectionConfig → transport layer
+```
+
+### 2. 起動フロー
+```
+1. climonitor --live → 設定読み込み → MonitorServer起動 → TCP/Unix Socket待機
+2. climonitor-launcher claude → 設定読み込み → LauncherClient起動 → 接続（IP制限チェック）
 3. LauncherClient → Claude起動（PTY） → 状態検出開始
 ```
 
-### 2. 状態検出フロー
+### 3. 状態検出フロー
 ```
 Claude出力 → PTY → ScreenBuffer → StateDetector → SessionStatus
                                                         ↓
-monitor ← Unix Socket ← LauncherToMonitor::StateUpdate ←┘
+monitor ← TCP/Unix Socket ← LauncherToMonitor::StateUpdate ←┘
 ```
 
 ### 3. 表示フロー
@@ -170,24 +199,30 @@ SessionManager → launcher-based表示 → LiveUI → ターミナル表示
 ### 2. クライアント・サーバー分離
 - launcher: PTY統合 + 状態検出
 - monitor: 状態管理 + UI表示 + 通知
-- Unix Domain Socket通信
+- 通信レイヤー: TCP（IP制限付き）/Unix Domain Socket
 
-### 3. Launcher-based表示システム
+### 3. 設定システム
+- TOML設定ファイル（複数候補パス自動検出）
+- 設定優先度: CLI > 環境変数 > 設定ファイル > デフォルト
+- 接続設定: TCP（セキュリティ）/Unix（ローカル）
+
+### 4. Launcher-based表示システム
 - セッション-based からlauncher-basedに移行
 - 接続済みlauncherを常に表示
 - セッション状態の有無を適切に処理
 
-### 4. PTY+1列バッファ
+### 5. PTY+1列バッファ
 - UIボックス重複問題の解決
 - ink.js期待動作とVTEパーサーの整合
 
-### 5. ロケール対応
+### 6. ロケール対応
 - 日本語/英語環境での時刻表示
 - Unicode安全なテキスト処理
 
-### 6. エラーハンドリング
+### 7. エラーハンドリング
 - launcher切断時の自動クリーンアップ
 - 接続失敗時のフォールバック
+- IP許可リスト違反時の接続拒否
 - Unicode安全なテキスト処理
 
 ## テスト構成
@@ -205,20 +240,23 @@ SessionManager → launcher-based表示 → LiveUI → ターミナル表示
 
 ```
 climonitor-monitor
-├── climonitor-shared (protocol)
-├── tokio (async runtime)
+├── climonitor-shared (protocol, config, transport)
+├── tokio (async runtime + TCP server)
 ├── ratatui (terminal UI)
 └── unicode-width, unicode-segmentation
 
 climonitor-launcher  
-├── climonitor-shared (protocol)
+├── climonitor-shared (protocol, config, transport)
 ├── portable-pty (PTY integration)
 ├── vte (terminal parser)
-└── tokio (async runtime)
+└── tokio (async runtime + TCP client)
 
 climonitor-shared
 ├── serde (serialization)
+├── toml (configuration parsing)
 ├── chrono (timestamps)
+├── home (home directory detection)
+├── cidr (IP range processing)
 └── standard library
 ```
 
