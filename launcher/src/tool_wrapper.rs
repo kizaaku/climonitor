@@ -1,6 +1,6 @@
 use crate::cli_tool::{get_pty_size, setup_common_pty_environment, CliTool};
 use anyhow::Result;
-use portable_pty::{native_pty_system, CommandBuilder};
+use portable_pty::CommandBuilder;
 use std::process::Stdio;
 use tokio::process::{Child, Command};
 
@@ -41,9 +41,12 @@ impl ToolWrapper {
     pub async fn spawn(&self) -> Result<Child> {
         let mut cmd = if cfg!(windows) {
             // Windows環境では.cmdファイルを実行するためにcmd.exeを使用
+            // フルパスを指定してコマンドを実行
             let mut cmd = Command::new("cmd");
-            cmd.args(&["/C", self.tool.command_name()]);
-            cmd.args(&self.args);
+            cmd.args(["/C"]);
+            // コマンド名と引数を一つの文字列として渡す
+            let full_command = format!("{} {}", self.tool.command_name(), self.args.join(" "));
+            cmd.arg(full_command);
             cmd
         } else {
             let mut cmd = Command::new(self.tool.command_name());
@@ -60,7 +63,7 @@ impl ToolWrapper {
 
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::inherit());
+            .stdin(Stdio::piped());
 
         let child = cmd.spawn()?;
         Ok(child)
@@ -73,7 +76,7 @@ impl ToolWrapper {
         Box<dyn portable_pty::Child + Send + Sync>,
         Box<dyn portable_pty::MasterPty + Send>,
     )> {
-        let pty_system = native_pty_system();
+        let pty_system = crate::cli_tool::create_optimized_pty_system();
 
         // PTYペアを作成
         let pty_pair = pty_system.openpty(get_pty_size())?;
@@ -82,8 +85,10 @@ impl ToolWrapper {
         let mut cmd = if cfg!(windows) {
             // Windows環境では.cmdファイルを実行するためにcmd.exeを使用
             let mut cmd = CommandBuilder::new("cmd");
-            cmd.args(&["/C", self.tool.command_name()]);
-            cmd.args(&self.args);
+            cmd.args(["/C"]);
+            // コマンド名と引数を一つの文字列として渡す
+            let full_command = format!("{} {}", self.tool.command_name(), self.args.join(" "));
+            cmd.arg(full_command);
             cmd
         } else {
             let mut cmd = CommandBuilder::new(self.tool.command_name());
@@ -95,7 +100,7 @@ impl ToolWrapper {
         let working_dir = self.working_dir.clone().unwrap_or_else(|| {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
         });
-        
+
         // Windows環境でのnull terminator問題を回避
         let path_str = working_dir.to_string_lossy();
         let clean_path = path_str.trim_end_matches('\0');

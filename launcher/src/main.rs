@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
 
     // ツールを作成
     let cli_tool = CliToolFactory::create_tool(tool_type);
-    
+
     // 作業ディレクトリを取得してnull terminatorを除去
     let current_dir = std::env::current_dir()?;
     let working_dir = {
@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
         let clean_path = path_str.trim_end_matches('\0');
         std::path::PathBuf::from(clean_path)
     };
-    
+
     let tool_wrapper = ToolWrapper::new(cli_tool, tool_args).working_dir(working_dir);
 
     // Launcher クライアントを作成（接続は内部で自動実行）
@@ -155,7 +155,6 @@ async fn main() -> Result<()> {
     .await?;
 
     // monitor接続時のみターミナルガード作成
-    #[cfg(unix)]
     let _terminal_guard = if launcher.is_connected() {
         use climonitor_launcher::transport_client::create_terminal_guard_global;
         Some(create_terminal_guard_global(config.logging.verbose)?)
@@ -223,16 +222,28 @@ async fn main() -> Result<()> {
 
     #[cfg(not(unix))]
     {
-        // 非Unix環境では通常の実行
-        match launcher.run_claude().await {
-            Ok(_) => {
-                if config.logging.verbose {
-                    println!("✅ CLI tool finished successfully");
+        // Windows環境でのCtrl+Cハンドリング
+        tokio::select! {
+            result = launcher.run_claude() => {
+                match result {
+                    Ok(_) => {
+                        if config.logging.verbose {
+                            println!("✅ CLI tool finished successfully");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ CLI tool execution failed: {e}");
+                        // Windows版では正常終了（TerminalGuardのDropが自動的に実行される）
+                        std::process::exit(1);
+                    }
                 }
             }
-            Err(e) => {
-                eprintln!("❌ CLI tool execution failed: {e}");
-                std::process::exit(1);
+            _ = tokio::signal::ctrl_c() => {
+                if config.logging.verbose {
+                    println!("\n🛑 Received Ctrl+C, shutting down gracefully...");
+                }
+                // Windows版では正常終了（TerminalGuardのDropが自動的に実行される）
+                return Ok(());
             }
         }
     }
