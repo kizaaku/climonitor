@@ -120,8 +120,19 @@ impl ToolWrapper {
 
     /// CLI ツール を直接実行（パススルー）
     pub async fn run_directly(&self) -> Result<()> {
-        let mut cmd = Command::new(self.tool.command_name());
-        cmd.args(&self.args);
+        let mut cmd = if cfg!(windows) {
+            // Windows環境では.cmdファイルを実行するためにcmd.exeを使用
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C"]);
+            // コマンド名と引数を一つの文字列として渡す
+            let full_command = format!("{} {}", self.tool.command_name(), self.args.join(" "));
+            cmd.arg(full_command);
+            cmd
+        } else {
+            let mut cmd = Command::new(self.tool.command_name());
+            cmd.args(&self.args);
+            cmd
+        };
 
         if let Some(working_dir) = &self.working_dir {
             cmd.current_dir(working_dir);
