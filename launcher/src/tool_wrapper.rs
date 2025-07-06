@@ -1,6 +1,6 @@
 use crate::cli_tool::{get_pty_size, setup_common_pty_environment, CliTool};
 use anyhow::Result;
-use portable_pty::{native_pty_system, CommandBuilder};
+use portable_pty::CommandBuilder;
 use std::process::Stdio;
 use tokio::process::{Child, Command};
 
@@ -39,16 +39,31 @@ impl ToolWrapper {
 
     /// CLI ツール プロセスを起動（従来のパイプベース）
     pub async fn spawn(&self) -> Result<Child> {
-        let mut cmd = Command::new(self.tool.command_name());
-        cmd.args(&self.args);
+        let mut cmd = if cfg!(windows) {
+            // Windows環境では.cmdファイルを実行するためにcmd.exeを使用
+            // フルパスを指定してコマンドを実行
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C"]);
+            // コマンド名と引数を一つの文字列として渡す
+            let full_command = format!("{} {}", self.tool.command_name(), self.args.join(" "));
+            cmd.arg(full_command);
+            cmd
+        } else {
+            let mut cmd = Command::new(self.tool.command_name());
+            cmd.args(&self.args);
+            cmd
+        };
 
         if let Some(working_dir) = &self.working_dir {
-            cmd.current_dir(working_dir);
+            // Windows環境でのnull terminator問題を回避
+            let path_str = working_dir.to_string_lossy();
+            let clean_path = path_str.trim_end_matches('\0');
+            cmd.current_dir(clean_path);
         }
 
         cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::inherit());
+            .stdin(Stdio::piped());
 
         let child = cmd.spawn()?;
         Ok(child)
@@ -61,20 +76,35 @@ impl ToolWrapper {
         Box<dyn portable_pty::Child + Send + Sync>,
         Box<dyn portable_pty::MasterPty + Send>,
     )> {
-        let pty_system = native_pty_system();
+        let pty_system = crate::cli_tool::create_optimized_pty_system();
 
         // PTYペアを作成
         let pty_pair = pty_system.openpty(get_pty_size())?;
 
         // コマンドを構築
-        let mut cmd = CommandBuilder::new(self.tool.command_name());
-        cmd.args(&self.args);
+        let mut cmd = if cfg!(windows) {
+            // Windows環境では.cmdファイルを実行するためにcmd.exeを使用
+            let mut cmd = CommandBuilder::new("cmd");
+            cmd.args(["/C"]);
+            // コマンド名と引数を一つの文字列として渡す
+            let full_command = format!("{} {}", self.tool.command_name(), self.args.join(" "));
+            cmd.arg(full_command);
+            cmd
+        } else {
+            let mut cmd = CommandBuilder::new(self.tool.command_name());
+            cmd.args(&self.args);
+            cmd
+        };
 
         // 作業ディレクトリを設定（指定がない場合は現在のディレクトリ）
         let working_dir = self.working_dir.clone().unwrap_or_else(|| {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
         });
-        cmd.cwd(working_dir);
+
+        // Windows環境でのnull terminator問題を回避
+        let path_str = working_dir.to_string_lossy();
+        let clean_path = path_str.trim_end_matches('\0');
+        cmd.cwd(clean_path);
 
         // 共通環境変数を設定
         setup_common_pty_environment(&mut cmd);

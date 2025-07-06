@@ -65,6 +65,13 @@ pub fn setup_common_pty_environment(cmd: &mut CommandBuilder) {
     cmd.env("FORCE_COLOR", "1");
 }
 
+/// クロスプラットフォーム対応のPTYシステム作成
+pub fn create_optimized_pty_system() -> Box<dyn portable_pty::PtySystem + Send> {
+    // portable-ptyが全プラットフォームで適切なPTY実装を提供
+    // Windows: ConPTY, Unix: 従来のPTY/pseudoterminal
+    portable_pty::native_pty_system()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

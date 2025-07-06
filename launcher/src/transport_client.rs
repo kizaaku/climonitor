@@ -13,15 +13,13 @@ use climonitor_shared::{
 
 /// PTY処理に必要な設定をまとめた構造体
 #[derive(Debug, Clone)]
-struct PtyHandlerConfig {
-    /// 詳細ログを有効にするか
-    verbose: bool,
-    /// ログファイルのパス
-    log_file: Option<PathBuf>,
-    /// 使用するCLIツールのタイプ
-    tool_type: crate::cli_tool::CliToolType,
-    /// monitor接続設定
-    connection_config: ConnectionConfig,
+pub struct PtyConfig {
+    pub launcher_id: String,
+    pub session_id: String,
+    pub verbose: bool,
+    pub log_file: Option<PathBuf>,
+    pub tool_type: crate::cli_tool::CliToolType,
+    pub connection_config: ConnectionConfig,
 }
 
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
@@ -191,13 +189,14 @@ impl TransportLauncherClient {
             verbose: self.verbose,
         };
 
-        // CLI ツール プロセス起動（PTYを使用してTTY環境を提供）
-        let (mut process, pty_master) = self.tool_wrapper.spawn_with_pty()?;
-
-        // PTYベースの双方向I/O開始
-        let pty_handle = self
-            .start_pty_bidirectional_io(pty_master, terminal_guard)
-            .await?;
+        // CLI ツール プロセス起動（全プラットフォームでPTYを使用）
+        let (mut process, io_handle) = {
+            let (process, pty_master) = self.tool_wrapper.spawn_with_pty()?;
+            let pty_handle = self
+                .start_pty_bidirectional_io(pty_master, terminal_guard)
+                .await?;
+            (process, pty_handle)
+        };
 
         if self.verbose {
             eprintln!("👀 Monitoring started for CLI tool process");
@@ -209,8 +208,8 @@ impl TransportLauncherClient {
         // シグナルハンドリングとリサイズ処理
         let exit_status = self.wait_with_signals(&mut wait_task).await;
 
-        // PTYタスクを終了
-        pty_handle.abort();
+        // I/Oタスクを終了
+        io_handle.abort();
 
         // 少し待機してI/Oが完了するのを待つ
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -265,22 +264,21 @@ impl TransportLauncherClient {
         let launcher_id = self.launcher_id.clone();
         let session_id = self.session_id.clone();
 
-        let pty_config = PtyHandlerConfig {
-            verbose: self.verbose,
-            log_file: self.log_file.clone(),
-            tool_type: self.tool_wrapper.get_tool_type(),
-            connection_config: self.connection_config.clone(),
-        };
+        let verbose = self.verbose;
+        let log_file = self.log_file.clone();
+        let tool_type = self.tool_wrapper.get_tool_type();
+        let connection_config = self.connection_config.clone();
 
         let handle = tokio::spawn(async move {
-            Self::handle_pty_bidirectional_io(
-                pty_master,
+            let config = PtyConfig {
                 launcher_id,
                 session_id,
-                pty_config,
-                _terminal_guard,
-            )
-            .await;
+                verbose,
+                log_file,
+                tool_type,
+                connection_config,
+            };
+            Self::handle_pty_bidirectional_io(pty_master, config, _terminal_guard).await;
         });
 
         Ok(handle)
@@ -289,9 +287,7 @@ impl TransportLauncherClient {
     /// PTY 双方向I/O処理
     async fn handle_pty_bidirectional_io(
         pty_master: Box<dyn MasterPty + Send>,
-        launcher_id: String,
-        session_id: String,
-        config: PtyHandlerConfig,
+        config: PtyConfig,
         _terminal_guard: DummyTerminalGuard,
     ) {
         // ログファイルを開く
@@ -337,36 +333,36 @@ impl TransportLauncherClient {
         };
 
         // 設定値を事前にコピー（move クロージャで使用するため）
-        let verbose = config.verbose;
+        let config_clone = config.clone();
 
         // 双方向I/Oタスクを起動
         let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout_with_monitoring(
                 pty_reader,
-                launcher_id.clone(),
-                session_id.clone(),
-                config.verbose,
+                config_clone.launcher_id.clone(),
+                config_clone.session_id.clone(),
+                config_clone.verbose,
                 log_writer,
-                config.tool_type,
-                config.connection_config,
+                config_clone.tool_type,
+                config_clone.connection_config,
             )
             .await;
         });
 
         let mut stdin_to_pty = tokio::spawn(async move {
-            Self::handle_stdin_to_pty_simple(pty_writer, verbose).await;
+            Self::handle_stdin_to_pty_simple(pty_writer, config.verbose).await;
         });
 
         // タスクの完了を待つ
         tokio::select! {
             _ = &mut pty_to_stdout => {
-                if verbose {
+                if config.verbose {
                     eprintln!("📡 PTY to stdout task ended");
                 }
                 stdin_to_pty.abort();
             }
             _ = &mut stdin_to_pty => {
-                if verbose {
+                if config.verbose {
                     eprintln!("📡 Stdin to PTY task ended");
                 }
                 pty_to_stdout.abort();
@@ -374,64 +370,63 @@ impl TransportLauncherClient {
         }
     }
 
-    /// プロセス終了とシグナルを待機（Unix版）
-    #[cfg(unix)]
+    /// プロセス終了とシグナルを待機
     async fn wait_with_signals(
         &self,
         wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>,
     ) -> Result<portable_pty::ExitStatus> {
-        let mut sigwinch =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
-        let mut sigint =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+        #[cfg(unix)]
+        {
+            let mut sigwinch =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+                    .unwrap();
+            let mut sigint =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).unwrap();
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
 
-        loop {
-            tokio::select! {
-                result = &mut *wait_task => {
-                    return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
-                }
-                _ = sigint.recv() => {
-                    if self.verbose {
-                        eprintln!("🛑 Received SIGINT, letting CLI tool handle it...");
+            loop {
+                tokio::select! {
+                    result = &mut *wait_task => {
+                        return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
                     }
-                }
-                _ = sigterm.recv() => {
-                    if self.verbose {
-                        eprintln!("🛑 Received SIGTERM, shutting down gracefully...");
+                    _ = sigint.recv() => {
+                        if self.verbose {
+                            eprintln!("🛑 Received SIGINT, letting CLI tool handle it...");
+                        }
                     }
-                    return Err(anyhow::anyhow!("Terminated by signal"));
-                }
-                _ = sigwinch.recv() => {
-                    if self.verbose {
-                        eprintln!("🔄 Terminal resized - updating PTY size...");
+                    _ = sigterm.recv() => {
+                        if self.verbose {
+                            eprintln!("🛑 Received SIGTERM, shutting down gracefully...");
+                        }
+                        return Err(anyhow::anyhow!("Terminated by signal"));
                     }
-                    let new_size = crate::cli_tool::get_pty_size();
-                    if self.verbose {
-                        let cols = new_size.cols;
-                        let rows = new_size.rows;
-                        eprintln!("📏 New terminal size: {cols}x{rows}");
+                    _ = sigwinch.recv() => {
+                        if self.verbose {
+                            eprintln!("🔄 Terminal resized - updating PTY size...");
+                        }
+                        let new_size = crate::cli_tool::get_pty_size();
+                        if self.verbose {
+                            let cols = new_size.cols;
+                            let rows = new_size.rows;
+                            eprintln!("📏 New terminal size: {cols}x{rows}");
+                        }
                     }
                 }
             }
         }
-    }
 
-    /// プロセス終了とシグナルを待機（非Unix版）
-    #[cfg(not(unix))]
-    async fn wait_with_signals(
-        &self,
-        wait_task: &mut tokio::task::JoinHandle<std::io::Result<portable_pty::ExitStatus>>,
-    ) -> Result<portable_pty::ExitStatus> {
-        loop {
-            tokio::select! {
-                result = &mut *wait_task => {
-                    return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    if self.verbose {
-                        eprintln!("🛑 Received Ctrl+C, letting CLI tool handle it...");
+        #[cfg(not(unix))]
+        {
+            loop {
+                tokio::select! {
+                    result = &mut *wait_task => {
+                        return result?.map_err(|e| anyhow::anyhow!("Process wait error: {}", e));
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        if self.verbose {
+                            eprintln!("🛑 Received Ctrl+C, letting CLI tool handle it...");
+                        }
                     }
                 }
             }
@@ -717,10 +712,272 @@ impl TransportLauncherClient {
     }
 }
 
-// 公開インターフェース
-pub use crate::launcher_client::{
-    create_terminal_guard_global, force_restore_terminal, TerminalGuard,
-};
+// Drop実装を削除し、明示的な切断処理に依存
+// （run_claude関数内で既に適切に切断メッセージが送信されている）
+
+/// ターミナル状態の自動復元ガード（クロスプラットフォーム対応）
+pub struct TerminalGuard {
+    verbose: bool,
+    #[cfg(unix)]
+    fd: i32,
+    #[cfg(unix)]
+    original: nix::sys::termios::Termios,
+    #[cfg(windows)]
+    original_mode: Option<u32>,
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::BorrowedFd;
+
+            // ターミナルかどうかチェック
+            if !nix::unistd::isatty(self.fd).unwrap_or(false) {
+                if self.verbose {
+                    eprintln!("🔓 Terminal guard dropped (non-TTY)");
+                }
+                return;
+            }
+
+            if self.verbose {
+                eprintln!("🔓 Restoring terminal settings");
+            }
+
+            // SAFETY: fd は有効なファイルディスクリプタです
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
+
+            if let Err(e) = nix::sys::termios::tcsetattr(
+                borrowed_fd,
+                nix::sys::termios::SetArg::TCSANOW,
+                &self.original,
+            ) {
+                if self.verbose {
+                    eprintln!("⚠️  Failed to restore terminal: {e}");
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use std::ptr;
+            use winapi::um::consoleapi::SetConsoleMode;
+            use winapi::um::processenv::GetStdHandle;
+            use winapi::um::winbase::STD_INPUT_HANDLE;
+
+            unsafe {
+                let stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+                if stdin_handle != ptr::null_mut() {
+                    if let Some(original_mode) = self.original_mode {
+                        // 元のコンソールモードを正確に復元
+                        if SetConsoleMode(stdin_handle, original_mode) != 0 {
+                            if self.verbose {
+                                eprintln!(
+                                    "🔓 Windows console mode restored to original (0x{:x})",
+                                    original_mode
+                                );
+                            }
+                        } else if self.verbose {
+                            eprintln!(
+                                "⚠️  Failed to restore original Windows console mode (0x{:x})",
+                                original_mode
+                            );
+                        }
+                    } else if self.verbose {
+                        eprintln!("⚠️  No original console mode to restore");
+                    }
+                }
+            }
+        }
+
+        if self.verbose {
+            eprintln!("🔓 Terminal guard dropped");
+        }
+    }
+}
+
+/// グローバル用のターミナルガード作成関数（クロスプラットフォーム対応）
+pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGuard> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::BorrowedFd;
+        use std::os::unix::io::AsRawFd;
+
+        let stdin_fd = std::io::stdin().as_raw_fd();
+
+        // stdinがターミナルかどうかチェック
+        if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+            if verbose {
+                eprintln!("🔒 Terminal guard created (non-TTY mode)");
+            }
+            // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
+            let dummy_termios = unsafe { std::mem::zeroed() };
+            return Ok(TerminalGuard {
+                verbose,
+                #[cfg(unix)]
+                fd: stdin_fd,
+                #[cfg(unix)]
+                original: dummy_termios,
+                #[cfg(windows)]
+                original_mode: None,
+            });
+        }
+
+        // SAFETY: stdin_fd は有効なファイルディスクリプタです
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+
+        let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
+            .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
+
+        // ターミナルをrawモードに設定
+        let mut raw_termios = original_termios.clone();
+        nix::sys::termios::cfmakeraw(&mut raw_termios);
+        nix::sys::termios::tcsetattr(
+            borrowed_fd,
+            nix::sys::termios::SetArg::TCSANOW,
+            &raw_termios,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
+
+        if verbose {
+            eprintln!("🔒 Terminal guard created with raw mode");
+        }
+
+        Ok(TerminalGuard {
+            verbose,
+            #[cfg(unix)]
+            fd: stdin_fd,
+            #[cfg(unix)]
+            original: original_termios,
+            #[cfg(windows)]
+            original_mode: None,
+        })
+    }
+
+    #[cfg(windows)]
+    {
+        use std::ptr;
+        use winapi::um::consoleapi::{GetConsoleMode, SetConsoleMode};
+        use winapi::um::processenv::GetStdHandle;
+        use winapi::um::winbase::STD_INPUT_HANDLE;
+        use winapi::um::wincon::{
+            ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
+            ENABLE_VIRTUAL_TERMINAL_INPUT,
+        };
+
+        unsafe {
+            let stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+            if stdin_handle == ptr::null_mut() {
+                return Ok(TerminalGuard {
+                    verbose,
+                    original_mode: None,
+                });
+            }
+
+            let mut original_mode = 0;
+            if GetConsoleMode(stdin_handle, &mut original_mode) == 0 {
+                return Ok(TerminalGuard {
+                    verbose,
+                    original_mode: None,
+                });
+            }
+
+            // Raw modeに設定（エコーとライン入力、プロセス処理を無効化してCLIツールに信号を委譲）
+            let new_mode = original_mode
+                & !ENABLE_ECHO_INPUT
+                & !ENABLE_LINE_INPUT
+                & !ENABLE_PROCESSED_INPUT  // Ctrl+Cなどの信号をCLIツールに委譲
+                | ENABLE_VIRTUAL_TERMINAL_INPUT;
+
+            if SetConsoleMode(stdin_handle, new_mode) == 0 {
+                if verbose {
+                    eprintln!("⚠️  Failed to set Windows console raw mode");
+                }
+                return Ok(TerminalGuard {
+                    verbose,
+                    original_mode: Some(original_mode),
+                });
+            }
+
+            if verbose {
+                eprintln!(
+                    "🔒 Windows console raw mode enabled (original: 0x{:x})",
+                    original_mode
+                );
+            }
+
+            Ok(TerminalGuard {
+                verbose,
+                original_mode: Some(original_mode),
+            })
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        // 他のプラットフォーム（将来的なサポート）
+        Ok(TerminalGuard { verbose })
+    }
+}
+
+/// 強制的にターミナル設定を復元する関数（緊急時用）
+#[cfg(unix)]
+pub fn force_restore_terminal() {
+    use std::os::fd::BorrowedFd;
+    use std::os::unix::io::AsRawFd;
+
+    let stdin_fd = std::io::stdin().as_raw_fd();
+
+    // ターミナルかどうかチェック
+    if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+        return;
+    }
+
+    // SAFETY: stdin_fd は有効なファイルディスクリプタです
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+
+    // 現在の設定を取得して、rawモードを解除
+    if let Ok(mut termios) = nix::sys::termios::tcgetattr(borrowed_fd) {
+        // rawモードを解除
+        termios.input_flags |=
+            nix::sys::termios::InputFlags::ICRNL | nix::sys::termios::InputFlags::IXON;
+        termios.output_flags |= nix::sys::termios::OutputFlags::OPOST;
+        termios.local_flags |= nix::sys::termios::LocalFlags::ECHO
+            | nix::sys::termios::LocalFlags::ECHONL
+            | nix::sys::termios::LocalFlags::ICANON
+            | nix::sys::termios::LocalFlags::ISIG
+            | nix::sys::termios::LocalFlags::IEXTEN;
+        termios.control_flags |= nix::sys::termios::ControlFlags::CREAD;
+
+        let _ =
+            nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &termios);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn force_restore_terminal() {
+    #[cfg(windows)]
+    {
+        use std::ptr;
+        use winapi::um::consoleapi::SetConsoleMode;
+        use winapi::um::processenv::GetStdHandle;
+        use winapi::um::winbase::STD_INPUT_HANDLE;
+        use winapi::um::wincon::{ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT};
+
+        unsafe {
+            let stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+            if stdin_handle != ptr::null_mut() {
+                // 標準的なコンソールモードに強制復元
+                let default_mode = ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT;
+                let _ = SetConsoleMode(stdin_handle, default_mode);
+                eprintln!(
+                    "🔓 Force restored Windows console to default mode (0x{:x})",
+                    default_mode
+                );
+            }
+        }
+    }
+}
 
 // 新しいクライアントをLauncherClientとしてエクスポート
 pub type LauncherClient = TransportLauncherClient;

@@ -16,6 +16,7 @@ climonitor は Claude Code と Gemini CLI の実行状態をリアルタイム�
 - **設定ファイル対応**: TOML形式の設定ファイルで詳細設定
 - **TCP/Unix通信**: ローカル・リモート両対応、IP制限によるセキュリティ
 - **ロケール対応**: 日本語/英語環境に対応した時刻表示
+- **クロスプラットフォーム**: Linux、Windows、macOS対応
 
 ## クイックスタート
 
@@ -48,6 +49,44 @@ cp examples/config-tcp.toml ~/.climonitor/config.toml
 export CLIMONITOR_TCP_ADDR="192.168.1.100:3001"
 ./target/release/climonitor-launcher claude
 ```
+
+### Windows セットアップ
+
+#### ローカルビルド（Windows）
+```powershell
+# 1. Rustがインストール済みであることを確認
+rustc --version
+
+# 2. ビルド
+cargo build --release
+
+# 3. PowerShell 1: 監視サーバー起動
+.\target\release\climonitor.exe --live
+
+# 4. PowerShell 2: Claude を監視付きで起動
+.\target\release\climonitor-launcher.exe claude
+```
+
+#### クロスコンパイル（Linux → Windows）
+```bash
+# 1. Windows向けターゲットを追加
+rustup target add x86_64-pc-windows-gnu
+
+# 2. mingw-w64をインストール
+sudo apt install mingw-w64
+
+# 3. Windows向けビルド
+cargo build --release --target x86_64-pc-windows-gnu
+
+# 4. 生成されたWindows実行ファイル
+ls target/x86_64-pc-windows-gnu/release/*.exe
+```
+
+#### Windows固有の注意点
+- **PTY対応**: Windows ConPTY（Console Pseudoterminal）を使用
+- **信号処理**: Ctrl+C、Ctrl+Zなどの信号をCLIツールに適切に転送
+- **パス処理**: Windows特有のパス区切り文字やnull terminator問題に対応
+- **.cmdファイル**: Claude Code、Gemini CLIの.cmdファイルも適切に実行
 
 ## 監視画面
 

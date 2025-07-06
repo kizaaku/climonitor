@@ -7,7 +7,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 authors = ["climonitor contributors"]
 license = "MIT"
 repository = "https://github.com/kizaaku/climonitor"
@@ -28,7 +28,7 @@ anyhow = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 
 # Launcher-specific dependencies
-portable-pty = "0.8"
+portable-pty = "0.9"
 terminal_size = "0.3"
 signal-hook = "0.3"
 libc = "0.2"
