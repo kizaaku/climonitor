@@ -717,10 +717,153 @@ impl TransportLauncherClient {
     }
 }
 
-// 公開インターフェース
-pub use crate::launcher_client::{
-    create_terminal_guard_global, force_restore_terminal, TerminalGuard,
-};
+/// ターミナル状態の自動復元ガード
+#[cfg(unix)]
+pub struct TerminalGuard {
+    fd: i32,
+    original: nix::sys::termios::Termios,
+    verbose: bool,
+}
+
+#[cfg(not(unix))]
+pub struct TerminalGuard {
+    verbose: bool,
+}
+
+#[cfg(unix)]
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        use std::os::fd::BorrowedFd;
+
+        // ターミナルかどうかチェック
+        if !nix::unistd::isatty(self.fd).unwrap_or(false) {
+            if self.verbose {
+                eprintln!("🔓 Terminal guard dropped (non-TTY)");
+            }
+            return;
+        }
+
+        if self.verbose {
+            eprintln!("🔓 Restoring terminal settings");
+        }
+
+        // SAFETY: fd は有効なファイルディスクリプタです
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.fd) };
+
+        if let Err(e) = nix::sys::termios::tcsetattr(
+            borrowed_fd,
+            nix::sys::termios::SetArg::TCSANOW,
+            &self.original,
+        ) {
+            if self.verbose {
+                eprintln!("⚠️  Failed to restore terminal: {e}");
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if self.verbose {
+            eprintln!("🔓 Terminal guard dropped (no-op on non-Unix)");
+        }
+    }
+}
+
+/// グローバル用のターミナルガード作成関数（main関数で使用）
+#[cfg(unix)]
+pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGuard> {
+    use std::os::fd::BorrowedFd;
+    use std::os::unix::io::AsRawFd;
+
+    let stdin_fd = std::io::stdin().as_raw_fd();
+
+    // stdinがターミナルかどうかチェック
+    if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+        if verbose {
+            eprintln!("🔒 Terminal guard created (non-TTY mode)");
+        }
+        // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
+        let dummy_termios = unsafe { std::mem::zeroed() };
+        return Ok(TerminalGuard {
+            fd: stdin_fd,
+            original: dummy_termios,
+            verbose,
+        });
+    }
+
+    // SAFETY: stdin_fd は有効なファイルディスクリプタです
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+
+    let original_termios = nix::sys::termios::tcgetattr(borrowed_fd)
+        .map_err(|e| anyhow::anyhow!("Failed to get terminal attributes: {}", e))?;
+
+    // ターミナルをrawモードに設定
+    let mut raw_termios = original_termios.clone();
+    nix::sys::termios::cfmakeraw(&mut raw_termios);
+    nix::sys::termios::tcsetattr(
+        borrowed_fd,
+        nix::sys::termios::SetArg::TCSANOW,
+        &raw_termios,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
+
+    if verbose {
+        eprintln!("🔒 Terminal guard created with raw mode");
+    }
+
+    Ok(TerminalGuard {
+        fd: stdin_fd,
+        original: original_termios,
+        verbose,
+    })
+}
+
+#[cfg(not(unix))]
+pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGuard> {
+    // 非Unix環境では何もしない
+    Ok(TerminalGuard { verbose })
+}
+
+/// 強制的にターミナル設定を復元する関数（緊急時用）
+#[cfg(unix)]
+pub fn force_restore_terminal() {
+    use std::os::fd::BorrowedFd;
+    use std::os::unix::io::AsRawFd;
+
+    let stdin_fd = std::io::stdin().as_raw_fd();
+
+    // ターミナルかどうかチェック
+    if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
+        return;
+    }
+
+    // SAFETY: stdin_fd は有効なファイルディスクリプタです
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
+
+    // 現在の設定を取得して、rawモードを解除
+    if let Ok(mut termios) = nix::sys::termios::tcgetattr(borrowed_fd) {
+        // rawモードを解除
+        termios.input_flags |=
+            nix::sys::termios::InputFlags::ICRNL | nix::sys::termios::InputFlags::IXON;
+        termios.output_flags |= nix::sys::termios::OutputFlags::OPOST;
+        termios.local_flags |= nix::sys::termios::LocalFlags::ECHO
+            | nix::sys::termios::LocalFlags::ECHONL
+            | nix::sys::termios::LocalFlags::ICANON
+            | nix::sys::termios::LocalFlags::ISIG
+            | nix::sys::termios::LocalFlags::IEXTEN;
+        termios.control_flags |= nix::sys::termios::ControlFlags::CREAD;
+
+        let _ =
+            nix::sys::termios::tcsetattr(borrowed_fd, nix::sys::termios::SetArg::TCSANOW, &termios);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn force_restore_terminal() {
+    // 非Unix環境では何もしない
+}
 
 // 新しいクライアントをLauncherClientとしてエクスポート
 pub type LauncherClient = TransportLauncherClient;

@@ -23,8 +23,15 @@ signal-hook = "0.3"
 libc = "0.2"
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-nix = { version = "0.29", features = ["term", "fs"] }
 vte = "0.13"
+
+# Unix-specific dependencies
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["term", "fs"] }
+
+# Windows-specific dependencies  
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["consoleapi", "processenv", "wincon", "winbase"] }
 
 [dev-dependencies]
 climonitor-monitor = { path = "../monitor" }

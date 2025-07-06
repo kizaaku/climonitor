@@ -133,7 +133,17 @@ async fn main() -> Result<()> {
 
     // ツールを作成
     let cli_tool = CliToolFactory::create_tool(tool_type);
-    let tool_wrapper = ToolWrapper::new(cli_tool, tool_args).working_dir(std::env::current_dir()?);
+    
+    // 作業ディレクトリを取得してnull terminatorを除去
+    let current_dir = std::env::current_dir()?;
+    let working_dir = {
+        let path_str = current_dir.to_string_lossy();
+        // Windows環境でのnull terminator問題を回避
+        let clean_path = path_str.trim_end_matches('\0');
+        std::path::PathBuf::from(clean_path)
+    };
+    
+    let tool_wrapper = ToolWrapper::new(cli_tool, tool_args).working_dir(working_dir);
 
     // Launcher クライアントを作成（接続は内部で自動実行）
     let mut launcher = LauncherClient::new(

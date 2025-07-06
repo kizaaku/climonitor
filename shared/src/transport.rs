@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::net::IpAddr;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -7,9 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 /// 接続設定
 #[derive(Debug, Clone)]
 pub enum ConnectionConfig {
-    Unix {
-        socket_path: PathBuf,
-    },
+    #[cfg(unix)]
+    Unix { socket_path: PathBuf },
     Tcp {
         bind_addr: String,        // "0.0.0.0:3001" or "localhost:3001"
         allowed_ips: Vec<String>, // IP許可リスト
@@ -18,6 +18,7 @@ pub enum ConnectionConfig {
 
 impl ConnectionConfig {
     /// デフォルトのUnix socket設定
+    #[cfg(unix)]
     pub fn default_unix() -> Self {
         Self::Unix {
             socket_path: std::env::temp_dir().join("climonitor.sock"),
@@ -35,22 +36,30 @@ impl ConnectionConfig {
     /// 環境変数から設定を読み込み
     pub fn from_env() -> Self {
         if let Ok(tcp_addr) = std::env::var("CLIMONITOR_TCP_ADDR") {
-            Self::Tcp {
+            return Self::Tcp {
                 bind_addr: tcp_addr,
                 allowed_ips: Vec::new(),
+            };
+        }
+        #[cfg(unix)]
+        {
+            if let Ok(socket_path) = std::env::var("CLIMONITOR_SOCKET_PATH") {
+                return Self::Unix {
+                    socket_path: socket_path.into(),
+                };
             }
-        } else if let Ok(socket_path) = std::env::var("CLIMONITOR_SOCKET_PATH") {
-            Self::Unix {
-                socket_path: socket_path.into(),
-            }
-        } else {
             Self::default_unix()
+        }
+        #[cfg(not(unix))]
+        {
+            Self::default_tcp()
         }
     }
 
     /// TCP接続のIP許可チェック
     pub fn is_ip_allowed(&self, peer_addr: &std::net::SocketAddr) -> bool {
         match self {
+            #[cfg(unix)]
             ConnectionConfig::Unix { .. } => true, // Unix socketは常に許可
             ConnectionConfig::Tcp { allowed_ips, .. } => {
                 // 許可リストが空の場合は全て許可
@@ -74,6 +83,7 @@ impl ConnectionConfig {
 
 /// 抽象化された接続ストリーム
 pub enum Connection {
+    #[cfg(unix)]
     Unix {
         reader: BufReader<tokio::net::unix::OwnedReadHalf>,
         writer: tokio::net::unix::OwnedWriteHalf,
@@ -89,6 +99,7 @@ pub enum Connection {
 impl Connection {
     pub async fn read_line(&mut self, buf: &mut String) -> Result<usize> {
         match self {
+            #[cfg(unix)]
             Connection::Unix { reader, .. } => Ok(reader.read_line(buf).await?),
             Connection::Tcp { reader, .. } => Ok(reader.read_line(buf).await?),
         }
@@ -96,6 +107,7 @@ impl Connection {
 
     pub async fn write_all(&mut self, data: &[u8]) -> Result<()> {
         match self {
+            #[cfg(unix)]
             Connection::Unix { writer, .. } => {
                 writer.write_all(data).await?;
                 Ok(())
@@ -109,6 +121,7 @@ impl Connection {
 
     pub async fn flush(&mut self) -> Result<()> {
         match self {
+            #[cfg(unix)]
             Connection::Unix { writer, .. } => {
                 writer.flush().await?;
                 Ok(())
@@ -122,6 +135,7 @@ impl Connection {
 
     pub fn peer_addr(&self) -> &str {
         match self {
+            #[cfg(unix)]
             Connection::Unix { peer_addr, .. } => peer_addr,
             Connection::Tcp { peer_addr, .. } => peer_addr,
         }
@@ -130,6 +144,7 @@ impl Connection {
 
 /// サーバー側のトランスポート
 pub enum ServerTransport {
+    #[cfg(unix)]
     Unix {
         listener: tokio::net::UnixListener,
         socket_path: PathBuf,
@@ -142,6 +157,7 @@ pub enum ServerTransport {
 impl ServerTransport {
     pub async fn bind(config: &ConnectionConfig) -> Result<Self> {
         match config {
+            #[cfg(unix)]
             ConnectionConfig::Unix { socket_path } => {
                 // 既存のソケットファイルを削除
                 if socket_path.exists() {
@@ -163,6 +179,7 @@ impl ServerTransport {
 
     pub async fn accept(&mut self, config: &ConnectionConfig) -> Result<Connection> {
         match self {
+            #[cfg(unix)]
             ServerTransport::Unix {
                 listener,
                 socket_path,
@@ -199,6 +216,7 @@ impl ServerTransport {
 
     pub async fn shutdown(&mut self) -> Result<()> {
         match self {
+            #[cfg(unix)]
             ServerTransport::Unix { socket_path, .. } => {
                 if socket_path.exists() {
                     tokio::fs::remove_file(socket_path).await?;
@@ -219,6 +237,7 @@ pub struct ClientTransport;
 impl ClientTransport {
     pub async fn connect(config: &ConnectionConfig) -> Result<Connection> {
         match config {
+            #[cfg(unix)]
             ConnectionConfig::Unix { socket_path } => {
                 let stream = tokio::net::UnixStream::connect(socket_path).await?;
                 let (reader, writer) = stream.into_split();

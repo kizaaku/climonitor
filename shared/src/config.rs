@@ -200,12 +200,18 @@ impl Config {
                 bind_addr: self.connection.tcp_bind_addr.clone(),
                 allowed_ips: self.connection.tcp_allowed_ips.clone(),
             },
+            #[cfg(unix)]
             _ => ConnectionConfig::Unix {
                 socket_path: self
                     .connection
                     .unix_socket_path
                     .clone()
                     .unwrap_or_else(|| std::env::temp_dir().join("climonitor.sock")),
+            },
+            #[cfg(not(unix))]
+            _ => ConnectionConfig::Tcp {
+                bind_addr: "127.0.0.1:3001".to_string(),
+                allowed_ips: Vec::new(),
             },
         }
     }
