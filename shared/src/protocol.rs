@@ -61,6 +61,13 @@ pub enum LauncherToMonitor {
         ui_above_text: Option<String>, // UI box上の⏺文字以降の具体的なテキスト
         timestamp: DateTime<Utc>,
     },
+    /// コンテキスト情報のみ更新（状態変化なし）
+    ContextUpdate {
+        launcher_id: String,
+        session_id: String,
+        ui_above_text: Option<String>, // UI box上の⏺文字以降の具体的なテキスト
+        timestamp: DateTime<Utc>,
+    },
     /// launcher切断
     Disconnect {
         launcher_id: String,

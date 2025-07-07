@@ -663,19 +663,23 @@ impl TransportLauncherClient {
         verbose: bool,
     ) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut last_ui_context: Option<String> = None;
 
         loop {
             interval.tick().await;
 
-            let current_status = {
+            let (current_status, current_ui_context) = {
                 if let Ok(detector) = state_detector.lock() {
-                    detector.current_state().clone()
+                    (
+                        detector.current_state().clone(),
+                        detector.get_ui_above_text(),
+                    )
                 } else {
                     continue;
                 }
             };
 
-            let should_notify = {
+            let (_status_changed, should_notify_status) = {
                 if let Ok(mut last_status) = last_notified_status.lock() {
                     if current_status != *last_status {
                         // Connected→Idle の直接遷移を防ぐ
@@ -685,41 +689,53 @@ impl TransportLauncherClient {
                             if verbose {
                                 eprintln!("🔒 [STATE_TRANSITION] Blocked Connected→Idle transition, keeping Connected");
                             }
-                            false // 状態変化を通知しない（Connected状態を維持）
+                            (false, false) // 状態変化を通知しない（Connected状態を維持）
                         } else {
                             *last_status = current_status.clone();
-                            true
+                            (true, true)
                         }
                     } else {
-                        false
+                        (false, false)
                     }
                 } else {
-                    false
+                    (false, false)
                 }
             };
 
-            if should_notify {
+            let context_changed = current_ui_context != last_ui_context;
+
+            // 状態変化時はStateUpdate、コンテキスト変化のみの場合はContextUpdate
+            if should_notify_status {
                 if verbose {
                     eprintln!("🔄 Periodic status update: {current_status:?}");
                 }
-
-                let ui_above_text = {
-                    if let Ok(detector) = state_detector.lock() {
-                        detector.get_ui_above_text()
-                    } else {
-                        None
-                    }
-                };
 
                 Self::send_status_update_simple(
                     &launcher_id,
                     &session_id,
                     current_status,
-                    ui_above_text,
+                    current_ui_context.clone(),
                     &connection_config,
                     verbose,
                 )
                 .await;
+
+                last_ui_context = current_ui_context;
+            } else if context_changed {
+                if verbose {
+                    eprintln!("🔄 Context update: {current_ui_context:?}");
+                }
+
+                Self::send_context_update_simple(
+                    &launcher_id,
+                    &session_id,
+                    current_ui_context.clone(),
+                    &connection_config,
+                    verbose,
+                )
+                .await;
+
+                last_ui_context = current_ui_context;
             }
         }
     }
@@ -756,6 +772,41 @@ impl TransportLauncherClient {
             Err(_) => {
                 if verbose {
                     eprintln!("⚠️  Failed to send periodic status update (monitor not available)");
+                }
+            }
+        }
+    }
+
+    /// 簡易コンテキスト更新送信
+    async fn send_context_update_simple(
+        launcher_id: &str,
+        session_id: &str,
+        ui_above_text: Option<String>,
+        connection_config: &ConnectionConfig,
+        verbose: bool,
+    ) {
+        match connect_client(connection_config).await {
+            Ok(mut connection) => {
+                let context_msg = LauncherToMonitor::ContextUpdate {
+                    launcher_id: launcher_id.to_string(),
+                    session_id: session_id.to_string(),
+                    ui_above_text,
+                    timestamp: chrono::Utc::now(),
+                };
+
+                if let Ok(msg_bytes) = serde_json::to_vec(&context_msg) {
+                    let _ = connection.write_all(&msg_bytes).await;
+                    let _ = connection.write_all(b"\n").await;
+                    let _ = connection.flush().await;
+
+                    if verbose {
+                        eprintln!("📤 Sent context update");
+                    }
+                }
+            }
+            Err(_) => {
+                if verbose {
+                    eprintln!("⚠️  Failed to send context update (monitor not available)");
                 }
             }
         }

@@ -142,6 +142,25 @@ impl SessionManager {
                 Ok(())
             }
 
+            LauncherToMonitor::ContextUpdate {
+                launcher_id,
+                session_id,
+                ui_above_text,
+                timestamp,
+            } => {
+                // 既存セッションのコンテキスト情報のみ更新
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    session.ui_above_text = ui_above_text;
+                    session.last_activity = timestamp;
+                } else {
+                    // セッションが存在しない場合は何もしない（ContextUpdateのみなので）
+                    if launcher_id.is_empty() {
+                        // コンパイラの未使用変数警告を回避
+                    }
+                }
+                Ok(())
+            }
+
             // ProcessMetrics は削除済み
 
             // OutputCapture は削除済み
