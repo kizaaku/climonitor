@@ -639,7 +639,9 @@ impl TransportLauncherClient {
                 if let Ok(mut last_status) = last_notified_status.lock() {
                     if current_status != *last_status {
                         // Connected→Idle の直接遷移を防ぐ
-                        if *last_status == SessionStatus::Connected && current_status == SessionStatus::Idle {
+                        if *last_status == SessionStatus::Connected
+                            && current_status == SessionStatus::Idle
+                        {
                             if verbose {
                                 eprintln!("🔒 [STATE_TRANSITION] Blocked Connected→Idle transition, keeping Connected");
                             }

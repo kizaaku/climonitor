@@ -40,7 +40,7 @@ impl ScreenClaudeStateDetector {
     }
 
     /// Claude固有の完了状態検出: "esc to interrupt"の有無で判定
-    /// 
+    ///
     /// Claudeは連続処理時に"esc to interrupt"が一瞬消えることがあるため、
     /// 真の状態変化（開始/完了）のみを検出してちらつきを防ぐ
     fn detect_claude_completion_state(&mut self) -> Option<SessionStatus> {
