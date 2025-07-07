@@ -189,6 +189,9 @@ fn test_timestamp_field_presence() {
             LauncherToMonitor::StateUpdate { .. } => {
                 assert!(json_value["StateUpdate"]["timestamp"].is_string());
             }
+            LauncherToMonitor::ContextUpdate { .. } => {
+                assert!(json_value["ContextUpdate"]["timestamp"].is_string());
+            }
             // ProcessMetrics は削除済み
             LauncherToMonitor::Disconnect { .. } => {
                 assert!(json_value["Disconnect"]["timestamp"].is_string());
