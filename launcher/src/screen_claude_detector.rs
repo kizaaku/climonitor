@@ -40,6 +40,9 @@ impl ScreenClaudeStateDetector {
     }
 
     /// Claude固有の完了状態検出: "esc to interrupt"の有無で判定
+    /// 
+    /// Claudeは連続処理時に"esc to interrupt"が一瞬消えることがあるため、
+    /// 真の状態変化（開始/完了）のみを検出してちらつきを防ぐ
     fn detect_claude_completion_state(&mut self) -> Option<SessionStatus> {
         // UIボックス近辺での"esc to interrupt)"検出のみ
         let ui_boxes = self.screen_buffer.find_ui_boxes();
@@ -69,7 +72,7 @@ impl ScreenClaudeStateDetector {
         if self.previous_had_esc_interrupt && !has_esc_interrupt {
             // "esc to interrupt"が消えた = 実行完了
             if self.verbose {
-                eprintln!("✅ [CLAUDE_COMPLETION] 'esc to interrupt' disappeared → Completing");
+                eprintln!("✅ [CLAUDE_COMPLETION] 'esc to interrupt' disappeared → Idle");
             }
             self.last_state_change = Some(now);
             self.previous_had_esc_interrupt = false;
