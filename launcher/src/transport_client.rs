@@ -22,6 +22,15 @@ pub struct PtyConfig {
     pub connection_config: ConnectionConfig,
 }
 
+/// PTY監視処理用の設定構造体
+struct PtyMonitoringConfig {
+    launcher_id: String,
+    session_id: String,
+    verbose: bool,
+    tool_type: crate::cli_tool::CliToolType,
+    connection_config: ConnectionConfig,
+}
+
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
 pub struct DummyTerminalGuard {
     #[allow(dead_code)]
@@ -269,6 +278,9 @@ impl TransportLauncherClient {
         let tool_type = self.tool_wrapper.get_tool_type();
         let connection_config = self.connection_config.clone();
 
+        // PTYのリサイズ機能を有効にするため、Arc<Mutex<>>でラップ
+        let pty_master_shared = std::sync::Arc::new(std::sync::Mutex::new(pty_master));
+
         let handle = tokio::spawn(async move {
             let config = PtyConfig {
                 launcher_id,
@@ -278,7 +290,7 @@ impl TransportLauncherClient {
                 tool_type,
                 connection_config,
             };
-            Self::handle_pty_bidirectional_io(pty_master, config, _terminal_guard).await;
+            Self::handle_pty_bidirectional_io(pty_master_shared, config, _terminal_guard).await;
         });
 
         Ok(handle)
@@ -286,7 +298,7 @@ impl TransportLauncherClient {
 
     /// PTY 双方向I/O処理
     async fn handle_pty_bidirectional_io(
-        pty_master: Box<dyn MasterPty + Send>,
+        pty_master: std::sync::Arc<std::sync::Mutex<Box<dyn MasterPty + Send>>>,
         config: PtyConfig,
         _terminal_guard: DummyTerminalGuard,
     ) {
@@ -312,21 +324,32 @@ impl TransportLauncherClient {
         };
 
         // PTY writer/reader を取得
-        let pty_writer = match pty_master.take_writer() {
-            Ok(writer) => writer,
-            Err(e) => {
-                if config.verbose {
-                    eprintln!("⚠️  Failed to get PTY writer: {e}");
-                }
-                return;
-            }
-        };
+        let (pty_writer, pty_reader) = {
+            if let Ok(master) = pty_master.lock() {
+                let writer = match master.take_writer() {
+                    Ok(writer) => writer,
+                    Err(e) => {
+                        if config.verbose {
+                            eprintln!("⚠️  Failed to get PTY writer: {e}");
+                        }
+                        return;
+                    }
+                };
 
-        let pty_reader = match pty_master.try_clone_reader() {
-            Ok(reader) => reader,
-            Err(e) => {
+                let reader = match master.try_clone_reader() {
+                    Ok(reader) => reader,
+                    Err(e) => {
+                        if config.verbose {
+                            eprintln!("⚠️  Failed to get PTY reader: {e}");
+                        }
+                        return;
+                    }
+                };
+
+                (writer, reader)
+            } else {
                 if config.verbose {
-                    eprintln!("⚠️  Failed to get PTY reader: {e}");
+                    eprintln!("⚠️  Failed to lock PTY master");
                 }
                 return;
             }
@@ -336,15 +359,20 @@ impl TransportLauncherClient {
         let config_clone = config.clone();
 
         // 双方向I/Oタスクを起動
+        let pty_master_for_resize = pty_master.clone();
+        let monitoring_config = PtyMonitoringConfig {
+            launcher_id: config_clone.launcher_id.clone(),
+            session_id: config_clone.session_id.clone(),
+            verbose: config_clone.verbose,
+            tool_type: config_clone.tool_type,
+            connection_config: config_clone.connection_config,
+        };
         let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout_with_monitoring(
                 pty_reader,
-                config_clone.launcher_id.clone(),
-                config_clone.session_id.clone(),
-                config_clone.verbose,
                 log_writer,
-                config_clone.tool_type,
-                config_clone.connection_config,
+                monitoring_config,
+                pty_master_for_resize,
             )
             .await;
         });
@@ -436,12 +464,9 @@ impl TransportLauncherClient {
     /// PTY出力をstdoutに転送（監視・ログ付き）
     async fn handle_pty_to_stdout_with_monitoring(
         mut pty_reader: Box<dyn std::io::Read + Send>,
-        launcher_id: String,
-        session_id: String,
-        verbose: bool,
         mut log_writer: Option<tokio::fs::File>,
-        tool_type: crate::cli_tool::CliToolType,
-        connection_config: ConnectionConfig,
+        config: PtyMonitoringConfig,
+        pty_master: std::sync::Arc<std::sync::Mutex<Box<dyn MasterPty + Send>>>,
     ) {
         use crate::state_detector::create_state_detector;
         use climonitor_shared::SessionStatus;
@@ -449,7 +474,8 @@ impl TransportLauncherClient {
         let state_detector: std::sync::Arc<
             std::sync::Mutex<Box<dyn crate::state_detector::StateDetector + Send>>,
         > = std::sync::Arc::new(std::sync::Mutex::new(create_state_detector(
-            tool_type, verbose,
+            config.tool_type,
+            config.verbose,
         )));
         let last_notified_status = std::sync::Arc::new(std::sync::Mutex::new(SessionStatus::Idle));
 
@@ -465,9 +491,10 @@ impl TransportLauncherClient {
         let state_checker_task = {
             let state_detector_clone = state_detector.clone();
             let last_notified_status_clone = last_notified_status.clone();
-            let launcher_id_clone = launcher_id.clone();
-            let session_id_clone = session_id.clone();
-            let config_clone = connection_config.clone();
+            let launcher_id_clone = config.launcher_id.clone();
+            let session_id_clone = config.session_id.clone();
+            let config_clone = config.connection_config.clone();
+            let verbose = config.verbose;
 
             tokio::spawn(async move {
                 Self::periodic_state_checker(
@@ -485,7 +512,7 @@ impl TransportLauncherClient {
         loop {
             match pty_reader.read(&mut buffer) {
                 Ok(0) => {
-                    if verbose {
+                    if config.verbose {
                         eprintln!("📡 PTY reader EOF");
                     }
                     state_checker_task.abort();
@@ -497,7 +524,7 @@ impl TransportLauncherClient {
 
                     // 標準出力に書き込み
                     if let Err(e) = stdout.write_all(data).await {
-                        if verbose {
+                        if config.verbose {
                             eprintln!("⚠️  Failed to write to stdout: {e}");
                         }
                         break;
@@ -506,7 +533,7 @@ impl TransportLauncherClient {
                     // ログファイルに書き込み
                     if let Some(ref mut log_file) = log_writer {
                         if let Err(e) = log_file.write_all(data).await {
-                            if verbose {
+                            if config.verbose {
                                 eprintln!("⚠️  Failed to write to log file: {e}");
                             }
                         }
@@ -517,7 +544,7 @@ impl TransportLauncherClient {
                     if current_terminal_size.rows != last_terminal_size.rows
                         || current_terminal_size.cols != last_terminal_size.cols
                     {
-                        if verbose {
+                        if config.verbose {
                             eprintln!(
                                 "🔄 Terminal size changed: {}x{} -> {}x{}",
                                 last_terminal_size.cols,
@@ -526,6 +553,19 @@ impl TransportLauncherClient {
                                 current_terminal_size.rows
                             );
                         }
+
+                        // PTYマスターのサイズを更新
+                        if let Ok(master) = pty_master.lock() {
+                            if let Err(e) = master.resize(current_terminal_size) {
+                                if config.verbose {
+                                    eprintln!("⚠️  Failed to resize PTY: {e}");
+                                }
+                            } else if config.verbose {
+                                eprintln!("✅ PTY resized successfully");
+                            }
+                        }
+
+                        // 状態検出器のバッファも更新
                         if let Ok(mut detector) = state_detector.lock() {
                             detector.resize_screen_buffer(
                                 current_terminal_size.rows as usize,
@@ -547,7 +587,7 @@ impl TransportLauncherClient {
                     }
                 }
                 Err(e) => {
-                    if verbose {
+                    if config.verbose {
                         eprintln!("⚠️  PTY read error: {e}");
                     }
                     state_checker_task.abort();
