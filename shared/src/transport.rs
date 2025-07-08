@@ -103,39 +103,6 @@ pub trait MessageReceiver: Send + Sync {
     async fn shutdown(&mut self) -> Result<()>;
 }
 
-/// クライアント用ファクトリー
-pub async fn create_message_sender(config: &ConnectionConfig) -> Result<Box<dyn MessageSender>> {
-    match config {
-        #[cfg(unix)]
-        ConnectionConfig::Unix { .. } => {
-            let sender = crate::unix_transport::UnixMessageSender::new(config).await?;
-            Ok(Box::new(sender))
-        }
-        ConnectionConfig::Grpc { .. } => {
-            let sender = crate::grpc_transport::GrpcMessageSender::new(config).await?;
-            Ok(Box::new(sender))
-        }
-    }
-}
-
-/// サーバー用ファクトリー
-pub async fn create_message_receiver(
-    config: &ConnectionConfig,
-    handler: Box<dyn MessageHandler>,
-) -> Result<Box<dyn MessageReceiver>> {
-    match config {
-        #[cfg(unix)]
-        ConnectionConfig::Unix { .. } => {
-            let receiver = crate::unix_transport::UnixMessageReceiver::new(config, handler).await?;
-            Ok(Box::new(receiver))
-        }
-        ConnectionConfig::Grpc { .. } => {
-            let receiver = crate::grpc_transport::GrpcMessageReceiver::new(config, handler).await?;
-            Ok(Box::new(receiver))
-        }
-    }
-}
-
 /// メッセージハンドラートレイト
 #[async_trait]
 pub trait MessageHandler: Send + Sync {

@@ -8,9 +8,9 @@ climonitorは、Claude CodeとGemini CLIのリアルタイム監視を行うRust
 
 ```
 climonitor/
-├── shared/           # 共通ライブラリ（プロトコル定義、gRPC）
-├── launcher/         # climonitor-launcher（CLIラッパー）
-├── monitor/          # climonitor（監視サーバー）
+├── shared/           # 共通ライブラリ（プロトコル定義、抽象化トレイト）
+├── launcher/         # climonitor-launcher（CLIラッパー + クライアント実装）
+├── monitor/          # climonitor（監視サーバー + サーバー実装）
 ├── proto/            # gRPC Protocol Buffers定義
 ├── docs/             # 技術ドキュメント
 └── CLAUDE.md         # Claude Code向けガイド
@@ -38,13 +38,13 @@ climonitor/
   - `to_connection_config()` - TransportConfig変換
 
 ### src/transport.rs
-- **責務**: 通信レイヤー抽象化、gRPC/Unix Socket統合
+- **責務**: 通信レイヤー抽象化トレイト定義
 - **主要型**:
   - `ConnectionConfig` - 接続設定（gRPC/Unix）
-  - `Connection` - 統一接続インターフェース
+  - `MessageSender` - クライアント送信インターフェース
+  - `MessageReceiver` - サーバー受信インターフェース
+  - `MessageHandler` - メッセージハンドラー抽象化
 - **主要関数**:
-  - `connect_client()` - クライアント接続
-  - `listen_server()` - サーバーリッスン
   - `is_ip_allowed()` - IP許可リスト検証
 
 ### src/message_conversion.rs
@@ -140,6 +140,15 @@ climonitor/
 - **責務**: PTYサイズ取得などの共通ユーティリティ
 - **主要関数**: `get_pty_size()` - 端末サイズ取得
 
+### src/transports/
+- **責務**: クライアント側トランスポート実装
+- **構成**:
+  - `mod.rs` - トランスポートファクトリー関数
+  - `unix.rs` - Unix Socketクライアント実装
+  - `grpc.rs` - gRPCクライアント実装
+- **主要関数**:
+  - `create_message_sender()` - 設定に応じたクライアント作成
+
 ## monitor/ (climonitor)
 
 ### src/main.rs
@@ -189,6 +198,15 @@ climonitor/
 - **主要関数**:
   - `truncate_str()` - grapheme cluster考慮のテキスト切り詰め
   - `display_width()` - 表示幅計算
+
+### src/transports/
+- **責務**: サーバー側トランスポート実装
+- **構成**:
+  - `mod.rs` - トランスポートファクトリー関数
+  - `unix.rs` - Unix Socketサーバー実装
+  - `grpc.rs` - gRPCサーバー実装
+- **主要関数**:
+  - `create_message_receiver()` - 設定に応じたサーバー作成
 
 ## proto/ (Protocol Buffers定義)
 
@@ -258,10 +276,11 @@ SessionManager → launcher-based表示 → LiveUI → ターミナル表示
 - 設定優先度: CLI > 環境変数 > 設定ファイル > デフォルト
 - 接続設定: gRPC（セキュリティ）/Unix（ローカル）
 
-### 4. gRPC統合
-- Protocol Buffers定義による型安全通信
-- 共有メッセージ変換ユーティリティ
-- 重複コード削減とパフォーマンス向上
+### 4. トランスポート層の分離アーキテクチャ
+- **抽象化**: shared crateでトレイト定義のみ
+- **実装分離**: launcher/monitorで具体実装
+- **ファクトリーパターン**: 設定に応じた実装選択
+- **責任分離**: クライアント/サーバー実装の完全分離
 
 ### 5. Launcher-based表示システム
 - セッション-based からlauncher-basedに移行

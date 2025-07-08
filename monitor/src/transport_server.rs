@@ -68,7 +68,7 @@ impl TransportMonitorServer {
 
         // Create message receiver
         let mut message_receiver =
-            climonitor_shared::create_message_receiver(&self.config, Box::new(handler)).await?;
+            crate::transports::create_message_receiver(&self.config, Box::new(handler)).await?;
 
         if self.verbose {
             println!("⚡ Server running, waiting for launcher connections...");

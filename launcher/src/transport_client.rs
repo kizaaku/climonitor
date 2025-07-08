@@ -118,7 +118,7 @@ impl TransportLauncherClient {
             );
         }
 
-        match climonitor_shared::create_message_sender(&self.connection_config).await {
+        match crate::transports::create_message_sender(&self.connection_config).await {
             Ok(sender) => {
                 self.message_sender = Some(sender);
                 if self.verbose {
@@ -871,7 +871,7 @@ impl TransportLauncherClient {
         } else {
             let _status_debug = format!("{status:?}");
             // Create a temporary sender for this operation
-            if let Ok(sender) = climonitor_shared::create_message_sender(connection_config).await {
+            if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
                 sender
                     .send_status_update(session_id.to_string(), status, Utc::now(), None)
                     .await?;
@@ -896,7 +896,7 @@ impl TransportLauncherClient {
             }
         } else {
             // Create a temporary sender for this operation
-            if let Ok(sender) = climonitor_shared::create_message_sender(connection_config).await {
+            if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
                 sender
                     .send_context_update(
                         session_id.to_string(),

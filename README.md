@@ -460,11 +460,14 @@ RUST_LOG=debug climonitor --live --verbose 2> monitor.log
 ## 技術仕様
 
 ### アーキテクチャ
-- **Monitor**: セッション状態を管理し、ライブUIを提供
-- **Launcher**: CLIツールをPTYでラップし、状態検出を実行
-- **Protocol**: Monitor と Launcher 間の通信プロトコル
-- **Transport**: Unix Socket / gRPC 通信レイヤー（IP制限対応）
-- **Config**: TOML設定ファイル管理（優先度制御）
+- **Shared**: 共通プロトコル定義、設定管理、抽象化トレイト
+- **Monitor**: セッション状態管理、ライブUI、サーバートランスポート実装
+- **Launcher**: CLIツールPTYラッパー、状態検出、クライアントトランスポート実装
+- **Transport Layer**: 分離アーキテクチャ
+  - 抽象化: shared crateでトレイト定義
+  - 実装分離: launcher（クライアント）/ monitor（サーバー）
+  - 統一インターフェース: 設定による自動選択（Unix Socket / gRPC）
+- **Config**: TOML設定ファイル管理（優先度制御、IP制限対応）
 
 ### 主な依存関係
 - **tokio** - 非同期ランタイム
@@ -472,6 +475,8 @@ RUST_LOG=debug climonitor --live --verbose 2> monitor.log
 - **vte** - 端末パーサー
 - **tonic** - gRPC実装（Rust）
 - **prost** - Protocol Buffers生成
+- **async-trait** - 非同期トレイト実装
+- **futures-util** - 非同期ストリーム処理
 - **chrono** - 日時処理（ロケール対応）
 - **serde** - JSON解析
 - **toml** - TOML設定ファイル解析

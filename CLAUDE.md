@@ -198,6 +198,12 @@ cargo test
 2. `launcher/src/screen_gemini_detector.rs` （Gemini用）
 3. テストケースを `launcher/tests/integration_state_detection.rs` に追加
 
+### トランスポート実装を変更する場合
+1. **クライアント側**: `launcher/src/transports/` で実装
+2. **サーバー側**: `monitor/src/transports/` で実装
+3. **抽象化**: `shared/src/transport.rs` のトレイトは変更せず
+4. **ファクトリー**: 各crateの `transports/mod.rs` でファクトリー更新
+
 ### プロトコル変更の場合
 1. `shared/src/protocol.rs` を更新
 2. monitor と launcher の両方を更新
@@ -220,6 +226,8 @@ cargo test
 3. **実際に使ってテスト**: climonitorを起動してClaude Codeの動作を確認
 4. **Unicode安全**: 日本語やemoji処理では文字境界に注意
 5. **状態検出優先**: 新機能よりも既存の状態検出精度を重視
+6. **アーキテクチャ理解**: shared（抽象化）とlauncher/monitor（実装）の分離を意識
+7. **トランスポート分離**: 新しいトランスポートは適切なcrateに実装
 
 ---
 
