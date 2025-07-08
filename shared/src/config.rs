@@ -24,11 +24,30 @@ pub struct Config {
     pub ui: UiSettings,
 }
 
+/// gRPC関連の設定
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrpcSettings {
+    /// gRPCサーバーのバインドアドレス
+    #[serde(default = "default_grpc_bind_addr")]
+    pub bind_addr: String,
+    
+    /// IP許可リスト
+    #[serde(default)]
+    pub allowed_ips: Vec<String>,
+}
+
+fn default_grpc_bind_addr() -> String {
+    "127.0.0.1:50051".to_string()
+}
+
 /// 接続関連の設定
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionSettings {
     /// Unix socket接続時のソケットパス
     pub unix_socket_path: Option<PathBuf>,
+    
+    /// gRPC接続設定
+    pub grpc: Option<GrpcSettings>,
 }
 
 /// ログ関連の設定
@@ -157,20 +176,28 @@ impl Config {
 
     /// 設定からConnectionConfigを生成
     pub fn to_connection_config(&self) -> ConnectionConfig {
-        #[cfg(unix)]
-        {
-            ConnectionConfig::Unix {
-                socket_path: self
-                    .connection
-                    .unix_socket_path
-                    .clone()
-                    .unwrap_or_else(|| std::env::temp_dir().join("climonitor.sock")),
+        // gRPC設定がある場合はgRPCを優先
+        if let Some(ref grpc_config) = self.connection.grpc {
+            ConnectionConfig::Grpc {
+                bind_addr: grpc_config.bind_addr.clone(),
+                allowed_ips: grpc_config.allowed_ips.clone(),
             }
-        }
-        #[cfg(not(unix))]
-        {
-            // Unix以外のプラットフォームでは現在サポートしていない
-            panic!("Unix socket is not supported on this platform")
+        } else {
+            #[cfg(unix)]
+            {
+                ConnectionConfig::Unix {
+                    socket_path: self
+                        .connection
+                        .unix_socket_path
+                        .clone()
+                        .unwrap_or_else(|| std::env::temp_dir().join("climonitor.sock")),
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                // Unix以外のプラットフォームではgRPCをデフォルト使用
+                ConnectionConfig::default_grpc()
+            }
         }
     }
 
@@ -291,6 +318,9 @@ verbose = true
             ConnectionConfig::Unix { socket_path } => {
                 assert_eq!(socket_path, PathBuf::from("/tmp/test.sock"));
             }
+            ConnectionConfig::Grpc { .. } => {
+                panic!("Expected Unix config, got Grpc");
+            }
         }
 
         // デフォルトパスをテスト
@@ -298,6 +328,9 @@ verbose = true
         match config.to_connection_config() {
             ConnectionConfig::Unix { socket_path } => {
                 assert_eq!(socket_path, std::env::temp_dir().join("climonitor.sock"));
+            }
+            ConnectionConfig::Grpc { .. } => {
+                panic!("Expected Unix config, got Grpc");
             }
         }
     }

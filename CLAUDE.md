@@ -17,17 +17,17 @@ climonitor-launcher claude
 climonitor --live
 ```
 
-### 設定ファイル使用
+### gRPC接続使用
 
 ```bash
 # 1. 設定ファイル作成
-cp examples/config-tcp.toml ~/.climonitor/config.toml
+cp examples/config-grpc.toml ~/.climonitor/config.toml
 
-# 2. 設定ファイルでサーバー起動
+# 2. 設定ファイルでgRPCサーバー起動
 climonitor --config ~/.climonitor/config.toml --live
 
 # 3. 環境変数でClaude起動
-export CLIMONITOR_TCP_ADDR="127.0.0.1:3001"
+export CLIMONITOR_GRPC_ADDR="127.0.0.1:50051"
 climonitor-launcher claude
 ```
 
@@ -42,7 +42,7 @@ cargo build --release
 cargo run --bin climonitor -- --live
 
 # 設定ファイル付きでサーバー起動
-cargo run --bin climonitor -- --config examples/config-tcp.toml --live
+cargo run --bin climonitor -- --config examples/config-grpc.toml --live
 
 # launcherの実行
 cargo run --bin climonitor-launcher -- claude
@@ -86,6 +86,7 @@ cargo clippy --all-targets --all-features
 - **実行コンテキスト**: 「● マージ完了！」「✦ Got it.」などの実行内容
 - **複数セッション**: 複数のCLIツールを同時監視
 - **リアルタイム**: 即座に状態変化を検出
+- **通信方式**: Unix Socket（ローカル）/ gRPC（リモート対応）
 
 ## 📊 監視画面の見方
 
@@ -122,7 +123,7 @@ cargo clippy --all-targets --all-features
 │ PTY + Claude Code            │───>│ Monitor Dashboard   │
 │ ├─ 画面出力をキャプチャ      │    │ ├─ セッション一覧   │
 │ ├─ 状態検出（●, esc to...）  │    │ ├─ 状態表示         │
-│ └─ Unix Socket送信           │    │ └─ リアルタイム更新 │
+│ └─ Unix Socket/gRPC送信      │    │ └─ リアルタイム更新 │
 └──────────────────────────────┘    └─────────────────────┘
 ```
 
@@ -162,13 +163,13 @@ climonitor --verbose --config ~/.climonitor/config.toml
 cat ~/.climonitor/config.toml
 ```
 
-**5. TCP接続エラー**
+**5. gRPC接続エラー**
 ```bash
 # IP許可リスト確認
-grep tcp_allowed_ips ~/.climonitor/config.toml
+grep grpc_allowed_ips ~/.climonitor/config.toml
 
 # 接続ログ確認
-climonitor --verbose --tcp --bind 0.0.0.0:3001
+climonitor --verbose --grpc --bind 0.0.0.0:50051
 ```
 
 ### デバッグログの見方

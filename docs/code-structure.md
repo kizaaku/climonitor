@@ -8,9 +8,10 @@ climonitorは、Claude CodeとGemini CLIのリアルタイム監視を行うRust
 
 ```
 climonitor/
-├── shared/           # 共通ライブラリ（プロトコル定義）
+├── shared/           # 共通ライブラリ（プロトコル定義、gRPC）
 ├── launcher/         # climonitor-launcher（CLIラッパー）
 ├── monitor/          # climonitor（監視サーバー）
+├── proto/            # gRPC Protocol Buffers定義
 ├── docs/             # 技術ドキュメント
 └── CLAUDE.md         # Claude Code向けガイド
 ```
@@ -37,14 +38,30 @@ climonitor/
   - `to_connection_config()` - TransportConfig変換
 
 ### src/transport.rs
-- **責務**: 通信レイヤー抽象化、TCP/Unix Socket統合
+- **責務**: 通信レイヤー抽象化、gRPC/Unix Socket統合
 - **主要型**:
-  - `ConnectionConfig` - 接続設定（TCP/Unix）
+  - `ConnectionConfig` - 接続設定（gRPC/Unix）
   - `Connection` - 統一接続インターフェース
 - **主要関数**:
   - `connect_client()` - クライアント接続
   - `listen_server()` - サーバーリッスン
   - `is_ip_allowed()` - IP許可リスト検証
+
+### src/message_conversion.rs
+- **責務**: gRPCメッセージ変換ユーティリティ
+- **主要関数**:
+  - `to_grpc_launcher_message()` - プロトコル → gRPC変換
+  - `from_grpc_launcher_message()` - gRPC → プロトコル変換
+  - `to_grpc_session_status()` - SessionStatus変換
+
+### src/climonitor.rs
+- **責務**: gRPC Protocol Buffers生成コード
+- **内容**: `proto/monitor.proto`から自動生成
+- **主要型**: `LauncherMessage`, `ContextUpdate`, `StatusUpdate`
+
+### build.rs
+- **責務**: Protocol Buffers コンパイル設定
+- **機能**: `proto/monitor.proto` → Rustコード生成
 
 ### src/cli_tool.rs
 - **責務**: CLIツール種別定義
@@ -56,15 +73,24 @@ climonitor/
 - **責務**: CLI引数解析、メインエントリーポイント
 - **主要関数**: `main()` - 引数に基づいてLauncherClientを起動
 
-### src/launcher_client.rs
-- **責務**: monitor server接続、セッション管理、PTY統合
-- **主要構造体**: `LauncherClient`
+### src/transport_client.rs
+- **責務**: transport layer クライアント、gRPC/Unix Socket統合
+- **主要構造体**: `TransportLauncherClient`
 - **主要関数**:
-  - `new()` - クライアント初期化
+  - `new()` - Unix Socket クライアント初期化
+  - `new_with_grpc()` - gRPC クライアント初期化
   - `run_claude()` - Claudeセッション実行
   - `start_pty_bidirectional_io()` - PTY I/O処理開始
-  - `send_state_update()` - 状態更新送信（永続接続）
-  - `send_status_update_persistent()` - 状態更新送信（新規接続）
+  - `send_unix_message()` - Unix Socket メッセージ送信
+
+### src/grpc_client.rs
+- **責務**: gRPC専用クライアント実装
+- **主要構造体**: `GrpcLauncherClient`
+- **主要関数**:
+  - `new()` - gRPC接続初期化
+  - `send_launcher_message()` - gRPCメッセージ送信
+  - `get_launcher_id()` - launcher ID取得
+  - `get_session_id()` - session ID取得
 
 ### src/tool_wrapper.rs
 - **責務**: 複数CLIツールの統一インターフェース
@@ -120,12 +146,20 @@ climonitor/
 - **責務**: CLI引数解析、monitor server起動
 - **主要関数**: `main()` - MonitorServerを起動
 
-### src/monitor_server.rs
-- **責務**: Unix Domain Socket server、メッセージ処理
-- **主要構造体**: `MonitorServer`
+### src/transport_server.rs
+- **責務**: transport layer サーバー、gRPC/Unix Socket統合
+- **主要構造体**: `TransportMonitorServer`
 - **主要関数**:
   - `run()` - サーバーメインループ
   - `handle_launcher_message()` - launcherメッセージ処理
+
+### src/grpc_server.rs
+- **責務**: gRPC専用サーバー実装
+- **主要構造体**: `MonitorService`
+- **主要機能**:
+  - `CliMonitorService` trait実装
+  - IP許可リスト検証
+  - SessionManager統合
 
 ### src/session_manager.rs
 - **責務**: セッション状態管理、launcher情報管理
@@ -156,6 +190,17 @@ climonitor/
   - `truncate_str()` - grapheme cluster考慮のテキスト切り詰め
   - `display_width()` - 表示幅計算
 
+## proto/ (Protocol Buffers定義)
+
+### monitor.proto
+- **責務**: gRPC サービスとメッセージ定義
+- **サービス**: `CliMonitorService`
+- **メッセージ型**:
+  - `LauncherMessage` - launcher → monitor通信
+  - `ContextUpdate` - 実行コンテキスト更新
+  - `StatusUpdate` - セッション状態更新
+  - `Empty` - 空レスポンス
+
 ## データフロー
 
 ### 1. 設定読み込みフロー
@@ -167,24 +212,31 @@ CLI引数 → 環境変数 → 設定ファイル自動検出 → デフォル�
 
 ### 2. 起動フロー
 ```
-1. climonitor --live → 設定読み込み → MonitorServer起動 → TCP/Unix Socket待機
-2. climonitor-launcher claude → 設定読み込み → LauncherClient起動 → 接続（IP制限チェック）
-3. LauncherClient → Claude起動（PTY） → 状態検出開始
+1. climonitor --live → 設定読み込み → TransportMonitorServer起動 → gRPC/Unix Socket待機
+2. climonitor-launcher claude → 設定読み込み → TransportLauncherClient起動 → 接続（IP制限チェック）
+3. TransportLauncherClient → Claude起動（PTY） → 状態検出開始
 ```
 
-### 3. 状態検出フロー
+### 3. 状態検出フロー（gRPC）
 ```
 Claude出力 → PTY → ScreenBuffer → StateDetector → SessionStatus
                                                         ↓
-monitor ← TCP/Unix Socket ← LauncherToMonitor::StateUpdate ←┘
+monitor ← gRPC ← GrpcLauncherClient ← message_conversion ←┘
 ```
 
-### 3. 表示フロー
+### 4. 状態検出フロー（Unix Socket）
+```
+Claude出力 → PTY → ScreenBuffer → StateDetector → SessionStatus
+                                                        ↓
+monitor ← Unix Socket ← LauncherToMonitor::StateUpdate ←┘
+```
+
+### 5. 表示フロー
 ```
 SessionManager → launcher-based表示 → LiveUI → ターミナル表示
 ```
 
-### 4. 通知フロー
+### 6. 通知フロー
 ```
 状態変化 → notification::send_notification_if_needed() → ~/.config/climonitor/notify.sh
 ```
@@ -199,27 +251,32 @@ SessionManager → launcher-based表示 → LiveUI → ターミナル表示
 ### 2. クライアント・サーバー分離
 - launcher: PTY統合 + 状態検出
 - monitor: 状態管理 + UI表示 + 通知
-- 通信レイヤー: TCP（IP制限付き）/Unix Domain Socket
+- 通信レイヤー: gRPC（IP制限付き）/Unix Domain Socket
 
 ### 3. 設定システム
 - TOML設定ファイル（複数候補パス自動検出）
 - 設定優先度: CLI > 環境変数 > 設定ファイル > デフォルト
-- 接続設定: TCP（セキュリティ）/Unix（ローカル）
+- 接続設定: gRPC（セキュリティ）/Unix（ローカル）
 
-### 4. Launcher-based表示システム
+### 4. gRPC統合
+- Protocol Buffers定義による型安全通信
+- 共有メッセージ変換ユーティリティ
+- 重複コード削減とパフォーマンス向上
+
+### 5. Launcher-based表示システム
 - セッション-based からlauncher-basedに移行
 - 接続済みlauncherを常に表示
 - セッション状態の有無を適切に処理
 
-### 5. PTY+1列バッファ
+### 6. PTY+1列バッファ
 - UIボックス重複問題の解決
 - ink.js期待動作とVTEパーサーの整合
 
-### 6. ロケール対応
+### 7. ロケール対応
 - 日本語/英語環境での時刻表示
 - Unicode安全なテキスト処理
 
-### 7. エラーハンドリング
+### 8. エラーハンドリング
 - launcher切断時の自動クリーンアップ
 - 接続失敗時のフォールバック
 - IP許可リスト違反時の接続拒否
@@ -240,18 +297,22 @@ SessionManager → launcher-based表示 → LiveUI → ターミナル表示
 
 ```
 climonitor-monitor
-├── climonitor-shared (protocol, config, transport)
-├── tokio (async runtime + TCP server)
+├── climonitor-shared (protocol, config, transport, gRPC)
+├── tokio (async runtime + gRPC server)
+├── tonic (gRPC implementation)
 ├── ratatui (terminal UI)
 └── unicode-width, unicode-segmentation
 
 climonitor-launcher  
-├── climonitor-shared (protocol, config, transport)
+├── climonitor-shared (protocol, config, transport, gRPC)
 ├── portable-pty (PTY integration)
 ├── vte (terminal parser)
-└── tokio (async runtime + TCP client)
+├── tokio (async runtime + gRPC client)
+└── tonic (gRPC implementation)
 
 climonitor-shared
+├── tonic (gRPC framework)
+├── prost (Protocol Buffers)
 ├── serde (serialization)
 ├── toml (configuration parsing)
 ├── chrono (timestamps)

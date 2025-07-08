@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 
 use crate::tool_wrapper::ToolWrapper;
 use climonitor_shared::{
-    connect_client, generate_connection_id, Connection, ConnectionConfig, LauncherToMonitor,
+    generate_connection_id, transport::MessageSender, ConnectionConfig, LauncherToMonitor,
     SessionStatus,
 };
 
@@ -42,7 +42,7 @@ pub struct DummyTerminalGuard {
 /// Transport対応 Launcher クライアント
 pub struct TransportLauncherClient {
     launcher_id: String,
-    connection: Option<Connection>,
+    message_sender: Option<Box<dyn MessageSender>>,
     grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
     connection_config: ConnectionConfig,
     tool_wrapper: ToolWrapper,
@@ -66,7 +66,7 @@ impl TransportLauncherClient {
 
         let mut client = Self {
             launcher_id,
-            connection: None,
+            message_sender: None,
             grpc_client: None,
             connection_config,
             tool_wrapper,
@@ -95,9 +95,9 @@ impl TransportLauncherClient {
 
         let client = Self {
             launcher_id,
-            connection: None, // gRPCクライアントは別途管理
+            message_sender: None, // gRPCクライアントは別途管理
             grpc_client: Some(grpc_client),
-            connection_config: climonitor_shared::ConnectionConfig::default_unix(), // ダミー
+            connection_config: climonitor_shared::ConnectionConfig::default_grpc(), // ダミー
             tool_wrapper,
             project_name,
             session_id,
@@ -119,9 +119,9 @@ impl TransportLauncherClient {
             );
         }
 
-        match connect_client(&self.connection_config).await {
-            Ok(connection) => {
-                self.connection = Some(connection);
+        match climonitor_shared::create_message_sender(&self.connection_config).await {
+            Ok(sender) => {
+                self.message_sender = Some(sender);
                 if self.verbose {
                     eprintln!("🔗 Connected to monitor server");
                 }
@@ -140,7 +140,7 @@ impl TransportLauncherClient {
 
     /// Monitor サーバーに接続されているかチェック
     pub fn is_connected(&self) -> bool {
-        self.connection.is_some() || self.grpc_client.is_some()
+        self.message_sender.is_some() || self.grpc_client.is_some()
     }
 
     /// 接続メッセージを送信
@@ -179,17 +179,22 @@ impl TransportLauncherClient {
             if self.verbose {
                 eprintln!("✅ gRPC connect message sent successfully");
             }
-        } else if let Some(ref mut connection) = self.connection {
+        } else if let Some(ref sender) = self.message_sender {
             if self.verbose {
                 eprintln!(
                     "📤 Sending connect message: launcher_id={}, project={:?}",
                     self.launcher_id, self.project_name
                 );
             }
-            let msg_bytes = serde_json::to_vec(&connect_msg)?;
-            connection.write_all(&msg_bytes).await?;
-            connection.write_all(b"\n").await?;
-            connection.flush().await?;
+            sender.send_connect(
+                self.project_name.clone(),
+                self.tool_wrapper.get_tool_type(),
+                self.tool_wrapper.get_args().to_vec(),
+                self.tool_wrapper
+                    .get_working_dir()
+                    .cloned()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+            ).await?;
             if self.verbose {
                 eprintln!("✅ Connect message sent successfully");
             }
@@ -206,14 +211,8 @@ impl TransportLauncherClient {
             if self.verbose {
                 eprintln!("📤 Sent gRPC disconnect message to monitor");
             }
-        } else if let Some(ref mut connection) = self.connection {
-            let disconnect_msg = LauncherToMonitor::Disconnect {
-                launcher_id: self.launcher_id.clone(),
-                timestamp: Utc::now(),
-            };
-            let msg_bytes = serde_json::to_vec(&disconnect_msg)?;
-            connection.write_all(&msg_bytes).await?;
-            connection.write_all(b"\n").await?;
+        } else if let Some(ref sender) = self.message_sender {
+            sender.send_disconnect(self.session_id.clone()).await?;
             if self.verbose {
                 eprintln!("📤 Sent disconnect message to monitor");
             }
@@ -228,24 +227,16 @@ impl TransportLauncherClient {
                 eprintln!("📤 Sending gRPC state update: {status:?}");
             }
             grpc_client.send_state_update(status, Some(message)).await?;
-        } else if self.connection.is_some() {
+        } else if let Some(ref sender) = self.message_sender {
             if self.verbose {
                 eprintln!("📤 Sending state update: {status:?}");
             }
-            let status_debug = format!("{status:?}");
-            Self::send_unix_message(
-                &self.connection_config,
-                &LauncherToMonitor::StateUpdate {
-                    launcher_id: self.launcher_id.clone(),
-                    session_id: self.session_id.clone(),
-                    status,
-                    ui_above_text: Some(message),
-                    timestamp: Utc::now(),
-                },
-                self.verbose,
-                &format!("state update: {status_debug}"),
-            )
-            .await?;
+            sender.send_status_update(
+                self.session_id.clone(),
+                status,
+                Utc::now(),
+                self.project_name.clone(),
+            ).await?;
         }
         Ok(())
     }
@@ -257,22 +248,15 @@ impl TransportLauncherClient {
                 eprintln!("📤 Sending gRPC context update");
             }
             grpc_client.send_context_update(Some(ui_above_text)).await?;
-        } else if self.connection.is_some() {
+        } else if let Some(ref sender) = self.message_sender {
             if self.verbose {
                 eprintln!("📤 Sending context update");
             }
-            Self::send_unix_message(
-                &self.connection_config,
-                &LauncherToMonitor::ContextUpdate {
-                    launcher_id: self.launcher_id.clone(),
-                    session_id: self.session_id.clone(),
-                    ui_above_text: Some(ui_above_text),
-                    timestamp: Utc::now(),
-                },
-                self.verbose,
-                "context update",
-            )
-            .await?;
+            sender.send_context_update(
+                self.session_id.clone(),
+                ui_above_text,
+                Utc::now(),
+            ).await?;
         }
         Ok(())
     }
@@ -350,8 +334,8 @@ impl TransportLauncherClient {
                     }
                 }
                 // 接続を明示的に閉じる
-                if let Some(connection) = self.connection.take() {
-                    drop(connection);
+                if let Some(sender) = self.message_sender.take() {
+                    drop(sender);
                     if self.verbose {
                         eprintln!("🔌 Connection closed (after error)");
                     }
@@ -364,8 +348,8 @@ impl TransportLauncherClient {
         self.send_disconnect_message().await?;
 
         // 接続を明示的に閉じる
-        if let Some(connection) = self.connection.take() {
-            drop(connection);
+        if let Some(sender) = self.message_sender.take() {
+            drop(sender);
             if self.verbose {
                 eprintln!("🔌 Connection closed");
             }
@@ -885,19 +869,15 @@ impl TransportLauncherClient {
             grpc_client.send_state_update(status, ui_above_text).await?;
         } else {
             let status_debug = format!("{status:?}");
-            Self::send_unix_message(
-                connection_config,
-                &LauncherToMonitor::StateUpdate {
-                    launcher_id: launcher_id.to_string(),
-                    session_id: session_id.to_string(),
+            // Create a temporary sender for this operation
+            if let Ok(sender) = climonitor_shared::create_message_sender(connection_config).await {
+                sender.send_status_update(
+                    session_id.to_string(),
                     status,
-                    ui_above_text,
-                    timestamp: Utc::now(),
-                },
-                verbose,
-                &format!("periodic status update: {status_debug}"),
-            )
-            .await?;
+                    Utc::now(),
+                    None,
+                ).await?;
+            }
         }
         Ok(())
     }
@@ -917,49 +897,19 @@ impl TransportLauncherClient {
                 eprintln!("📤 Sent gRPC context update");
             }
         } else {
-            Self::send_unix_message(
-                connection_config,
-                &LauncherToMonitor::ContextUpdate {
-                    launcher_id: launcher_id.to_string(),
-                    session_id: session_id.to_string(),
-                    ui_above_text,
-                    timestamp: Utc::now(),
-                },
-                verbose,
-                "context update",
-            )
-            .await?;
+            // Create a temporary sender for this operation
+            if let Ok(sender) = climonitor_shared::create_message_sender(connection_config).await {
+                sender.send_context_update(
+                    session_id.to_string(),
+                    ui_above_text.unwrap_or_default(),
+                    Utc::now(),
+                ).await?;
+            }
         }
         Ok(())
     }
 
-    /// Unix socket経由でメッセージを送信するヘルパー
-    async fn send_unix_message(
-        connection_config: &ConnectionConfig,
-        message: &LauncherToMonitor,
-        verbose: bool,
-        operation_name: &str,
-    ) -> Result<()> {
-        match connect_client(connection_config).await {
-            Ok(mut connection) => {
-                let msg_bytes = serde_json::to_vec(message)?;
-                connection.write_all(&msg_bytes).await?;
-                connection.write_all(b"\n").await?;
-                connection.flush().await?;
-
-                if verbose {
-                    eprintln!("📤 Sent {operation_name}");
-                }
-                Ok(())
-            }
-            Err(e) => {
-                if verbose {
-                    eprintln!("⚠️  Failed to send {operation_name} (monitor not available)");
-                }
-                Err(e)
-            }
-        }
-    }
+    // This method is no longer needed as we use the trait-based MessageSender API
 }
 
 // Drop実装を削除し、明示的な切断処理に依存
@@ -1234,7 +1184,7 @@ impl Drop for TransportLauncherClient {
     fn drop(&mut self) {
         // Drop時に同期的に切断メッセージを送信することは困難なため、
         // 主にログ出力とクリーンアップに集中
-        if self.verbose && (self.connection.is_some() || self.grpc_client.is_some()) {
+        if self.verbose && (self.message_sender.is_some() || self.grpc_client.is_some()) {
             eprintln!("📤 TransportLauncherClient dropping - connection cleanup");
         }
 

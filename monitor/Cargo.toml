@@ -30,6 +30,7 @@ home.workspace = true
 tonic = "0.10"
 prost = "0.12"
 tokio-stream = "0.1"
+async-trait = "0.1"
 
 [dev-dependencies]
 climonitor-launcher = { path = "../launcher" }

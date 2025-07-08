@@ -28,7 +28,7 @@ struct Cli {
     grpc: bool,
 
     /// gRPC bind address (only with --grpc)
-    #[arg(long, default_value = "127.0.0.1:3001")]
+    #[arg(long, default_value = "127.0.0.1:50051")]
     bind: String,
 
     /// Unix socket path (default: /tmp/climonitor.sock)

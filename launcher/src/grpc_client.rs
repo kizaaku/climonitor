@@ -105,8 +105,16 @@ impl GrpcLauncherClient {
         let endpoint = match connection_config {
             #[cfg(unix)]
             ConnectionConfig::Unix { .. } => {
-                // Unix Socket は gRPC では直接サポートされていないため、TCP フォールバック
-                "http://127.0.0.1:3001".to_string()
+                // Unix Socket は gRPC では直接サポートされていないため、デフォルトgRPCアドレスを使用
+                "http://127.0.0.1:50051".to_string()
+            }
+            ConnectionConfig::Grpc { bind_addr, .. } => {
+                // gRPC設定から接続アドレスを取得
+                if bind_addr.starts_with("http://") || bind_addr.starts_with("https://") {
+                    bind_addr.clone()
+                } else {
+                    format!("http://{}", bind_addr)
+                }
             }
         };
 
