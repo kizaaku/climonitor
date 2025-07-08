@@ -17,3 +17,11 @@ anyhow = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 tokio = { version = "1.0", features = ["net", "io-util", "fs"] }
 home = "0.5"
+
+# gRPC dependencies
+tonic = "0.10"
+prost = "0.12"
+prost-types = "0.12"
+
+[build-dependencies]
+tonic-build = "0.10"

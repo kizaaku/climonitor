@@ -423,11 +423,4 @@ mod tests {
         let server = TransportMonitorServer::new(config, false, None);
         assert!(server.is_ok());
     }
-
-    #[tokio::test]
-    async fn test_tcp_server_creation() {
-        let config = ConnectionConfig::default_tcp();
-        let server = TransportMonitorServer::new(config, false, None);
-        assert!(server.is_ok());
-    }
 }

@@ -3,6 +3,7 @@ use clap::{Arg, Command};
 
 // lib crate から import
 use climonitor_launcher::cli_tool::{CliToolFactory, CliToolType};
+use climonitor_launcher::grpc_client::GrpcLauncherClient;
 use climonitor_launcher::tool_wrapper::ToolWrapper;
 use climonitor_launcher::transport_client::LauncherClient;
 use climonitor_shared::Config;
@@ -26,15 +27,15 @@ async fn main() -> Result<()> {
                 .value_name("FILE"),
         )
         .arg(
-            Arg::new("tcp")
-                .long("tcp")
-                .help("Use TCP connection instead of Unix domain socket")
+            Arg::new("grpc")
+                .long("grpc")
+                .help("Use gRPC protocol instead of raw TCP/Unix socket")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
             Arg::new("connect")
                 .long("connect")
-                .help("Connection address (TCP: host:port, Unix: socket path)")
+                .help("Connection address (Unix: socket path)")
                 .value_name("ADDR"),
         )
         .arg(
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
     let log_file = matches
         .get_one::<String>("log_file")
         .map(std::path::PathBuf::from);
-    let use_tcp = matches.get_flag("tcp");
+    let use_grpc = matches.get_flag("grpc");
     let connect_addr = matches.get_one::<String>("connect");
     let config_path = matches
         .get_one::<String>("config")
@@ -103,17 +104,8 @@ async fn main() -> Result<()> {
     config.apply_env_overrides();
 
     // CLI引数で上書き
-    if use_tcp {
-        config.connection.r#type = "tcp".to_string();
-        if let Some(addr) = connect_addr {
-            config.connection.tcp_bind_addr = addr.to_string();
-        }
-    } else if let Some(addr) = connect_addr {
-        if addr.starts_with("tcp://") {
-            config.connection.r#type = "tcp".to_string();
-            config.connection.tcp_bind_addr = addr.strip_prefix("tcp://").unwrap().to_string();
-        } else {
-            config.connection.r#type = "unix".to_string();
+    if let Some(addr) = connect_addr {
+        if !addr.starts_with("tcp://") {
             config.connection.unix_socket_path = Some(addr.into());
         }
     }
@@ -132,7 +124,7 @@ async fn main() -> Result<()> {
     }
 
     // ツールを作成
-    let cli_tool = CliToolFactory::create_tool(tool_type);
+    let cli_tool = CliToolFactory::create_tool(tool_type.clone());
 
     // 作業ディレクトリを取得してnull terminatorを除去
     let current_dir = std::env::current_dir()?;
@@ -145,7 +137,158 @@ async fn main() -> Result<()> {
 
     let tool_wrapper = ToolWrapper::new(cli_tool, tool_args).working_dir(working_dir);
 
-    // Launcher クライアントを作成（接続は内部で自動実行）
+    if use_grpc {
+        // gRPC接続
+        if verbose {
+            println!("🚀 Using gRPC protocol");
+        }
+
+        let grpc_client = if let Some(addr) = connect_addr {
+            let endpoint = if addr.starts_with("http://") || addr.starts_with("https://") {
+                addr.to_string()
+            } else {
+                format!("http://{addr}")
+            };
+            if verbose {
+                println!("🔧 gRPC endpoint: {endpoint}");
+            }
+            let launcher_id = climonitor_shared::generate_connection_id();
+            let session_id = climonitor_shared::generate_connection_id();
+            GrpcLauncherClient::new_with_endpoint(launcher_id, session_id, endpoint).await?
+        } else {
+            GrpcLauncherClient::new(&connection_config).await?
+        };
+
+        // Connect message送信
+        grpc_client
+            .send_connect(
+                tool_wrapper.guess_project_name(),
+                tool_type,
+                tool_wrapper.get_args().to_vec(),
+                tool_wrapper
+                    .get_working_dir()
+                    .cloned()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap()),
+            )
+            .await?;
+
+        if verbose {
+            println!("🔄 Running CLI tool with gRPC monitoring...");
+        }
+
+        // gRPC用のLauncherClient作成（PTY監視付き）
+        let mut launcher = LauncherClient::new_with_grpc(
+            tool_wrapper,
+            grpc_client,
+            config.logging.verbose,
+            config.logging.log_file,
+        )
+        .await?;
+
+        // monitor接続時のみターミナルガード作成
+        let _terminal_guard = if launcher.is_connected() {
+            use climonitor_launcher::transport_client::create_terminal_guard_global;
+            Some(create_terminal_guard_global(config.logging.verbose)?)
+        } else {
+            None
+        };
+
+        // gRPCパスでも同様のシグナルハンドリングを実装
+        #[cfg(unix)]
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        #[cfg(unix)]
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+        // プラットフォーム固有のシグナルハンドリング
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                result = launcher.run_claude() => {
+                    match result {
+                        Ok(_) => {
+                            if config.logging.verbose {
+                                println!("✅ CLI tool finished successfully");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ CLI tool execution failed: {e}");
+                            if let Some(guard) = _terminal_guard {
+                                drop(guard); // ターミナル設定を明示的に復元
+                            }
+                            climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ = sigint.recv() => {
+                    if config.logging.verbose {
+                        println!("\n🛑 Received SIGINT, shutting down gracefully...");
+                    }
+                    if let Some(guard) = _terminal_guard {
+                        drop(guard); // ターミナル設定を明示的に復元
+                    }
+                    climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                    std::process::exit(130); // 128 + 2 (SIGINT)
+                }
+                _ = sigterm.recv() => {
+                    if config.logging.verbose {
+                        println!("\n🛑 Received SIGTERM, shutting down gracefully...");
+                    }
+                    if let Some(guard) = _terminal_guard {
+                        drop(guard); // ターミナル設定を明示的に復元
+                    }
+                    climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                    std::process::exit(143); // 128 + 15 (SIGTERM)
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    if config.logging.verbose {
+                        println!("\n🛑 Received Ctrl+C, shutting down gracefully...");
+                    }
+                    if let Some(guard) = _terminal_guard {
+                        drop(guard); // ターミナル設定を明示的に復元
+                    }
+                    climonitor_launcher::transport_client::force_restore_terminal(); // 強制復元
+                    std::process::exit(130); // 128 + 2 (SIGINT)
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            tokio::select! {
+                result = launcher.run_claude() => {
+                    match result {
+                        Ok(_) => {
+                            if config.logging.verbose {
+                                println!("✅ CLI tool finished successfully");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ CLI tool execution failed: {e}");
+                            // Windows版では正常終了（TerminalGuardのDropが自動的に実行される）
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    if config.logging.verbose {
+                        println!("\n🛑 Received Ctrl+C, shutting down gracefully...");
+                    }
+                    // Windows版では正常終了（TerminalGuardのDropが自動的に実行される）
+                    return Ok(());
+                }
+            }
+        }
+
+        if config.logging.verbose {
+            println!("👋 climonitor-launcher finished");
+        }
+
+        return Ok(());
+    }
+
+    // 従来のTCP/Unix socket接続
     let mut launcher = LauncherClient::new(
         tool_wrapper,
         connection_config,

@@ -20,6 +20,7 @@ pub struct PtyConfig {
     pub log_file: Option<PathBuf>,
     pub tool_type: crate::cli_tool::CliToolType,
     pub connection_config: ConnectionConfig,
+    pub grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
 }
 
 /// PTY監視処理用の設定構造体
@@ -29,6 +30,7 @@ struct PtyMonitoringConfig {
     verbose: bool,
     tool_type: crate::cli_tool::CliToolType,
     connection_config: ConnectionConfig,
+    grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
 }
 
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
@@ -41,6 +43,7 @@ pub struct DummyTerminalGuard {
 pub struct TransportLauncherClient {
     launcher_id: String,
     connection: Option<Connection>,
+    grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
     connection_config: ConnectionConfig,
     tool_wrapper: ToolWrapper,
     project_name: Option<String>,
@@ -64,6 +67,7 @@ impl TransportLauncherClient {
         let mut client = Self {
             launcher_id,
             connection: None,
+            grpc_client: None,
             connection_config,
             tool_wrapper,
             project_name,
@@ -74,6 +78,34 @@ impl TransportLauncherClient {
 
         // Monitor サーバーに接続を試行
         client.try_connect_to_monitor().await?;
+
+        Ok(client)
+    }
+
+    /// gRPC client付きで新しいTransportLauncherClientを作成
+    pub async fn new_with_grpc(
+        tool_wrapper: ToolWrapper,
+        grpc_client: crate::grpc_client::GrpcLauncherClient,
+        verbose: bool,
+        log_file: Option<PathBuf>,
+    ) -> Result<Self> {
+        let launcher_id = grpc_client.get_launcher_id().to_string();
+        let session_id = grpc_client.get_session_id().to_string();
+        let project_name = tool_wrapper.guess_project_name();
+
+        let client = Self {
+            launcher_id,
+            connection: None, // gRPCクライアントは別途管理
+            grpc_client: Some(grpc_client),
+            connection_config: climonitor_shared::ConnectionConfig::default_unix(), // ダミー
+            tool_wrapper,
+            project_name,
+            session_id,
+            verbose,
+            log_file,
+        };
+
+        // Note: gRPCクライアントは既に接続済みのため、接続試行は不要
 
         Ok(client)
     }
@@ -108,37 +140,56 @@ impl TransportLauncherClient {
 
     /// Monitor サーバーに接続されているかチェック
     pub fn is_connected(&self) -> bool {
-        self.connection.is_some()
+        self.connection.is_some() || self.grpc_client.is_some()
     }
 
     /// 接続メッセージを送信
     async fn send_connect_message(&mut self) -> Result<()> {
-        if let Some(ref mut connection) = self.connection {
-            let connect_msg = LauncherToMonitor::Connect {
-                launcher_id: self.launcher_id.clone(),
-                project: self.project_name.clone(),
-                tool_type: self.tool_wrapper.get_tool_type(),
-                claude_args: self.tool_wrapper.get_args().to_vec(),
-                working_dir: self
-                    .tool_wrapper
-                    .get_working_dir()
-                    .cloned()
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
-                timestamp: Utc::now(),
-            };
+        let connect_msg = LauncherToMonitor::Connect {
+            launcher_id: self.launcher_id.clone(),
+            project: self.project_name.clone(),
+            tool_type: self.tool_wrapper.get_tool_type(),
+            claude_args: self.tool_wrapper.get_args().to_vec(),
+            working_dir: self
+                .tool_wrapper
+                .get_working_dir()
+                .cloned()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+            timestamp: Utc::now(),
+        };
 
+        if let Some(ref grpc_client) = self.grpc_client {
+            if self.verbose {
+                eprintln!(
+                    "📤 Sending gRPC connect message: launcher_id={}, project={:?}",
+                    self.launcher_id, self.project_name
+                );
+            }
+            grpc_client
+                .send_connect(
+                    self.project_name.clone(),
+                    self.tool_wrapper.get_tool_type(),
+                    self.tool_wrapper.get_args().to_vec(),
+                    self.tool_wrapper
+                        .get_working_dir()
+                        .cloned()
+                        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                )
+                .await?;
+            if self.verbose {
+                eprintln!("✅ gRPC connect message sent successfully");
+            }
+        } else if let Some(ref mut connection) = self.connection {
             if self.verbose {
                 eprintln!(
                     "📤 Sending connect message: launcher_id={}, project={:?}",
                     self.launcher_id, self.project_name
                 );
             }
-
             let msg_bytes = serde_json::to_vec(&connect_msg)?;
             connection.write_all(&msg_bytes).await?;
             connection.write_all(b"\n").await?;
             connection.flush().await?;
-
             if self.verbose {
                 eprintln!("✅ Connect message sent successfully");
             }
@@ -150,19 +201,78 @@ impl TransportLauncherClient {
 
     /// 切断メッセージを送信
     async fn send_disconnect_message(&mut self) -> Result<()> {
-        if let Some(ref mut connection) = self.connection {
+        if let Some(ref grpc_client) = self.grpc_client {
+            grpc_client.send_disconnect().await?;
+            if self.verbose {
+                eprintln!("📤 Sent gRPC disconnect message to monitor");
+            }
+        } else if let Some(ref mut connection) = self.connection {
             let disconnect_msg = LauncherToMonitor::Disconnect {
                 launcher_id: self.launcher_id.clone(),
                 timestamp: Utc::now(),
             };
-
             let msg_bytes = serde_json::to_vec(&disconnect_msg)?;
             connection.write_all(&msg_bytes).await?;
             connection.write_all(b"\n").await?;
-
             if self.verbose {
                 eprintln!("📤 Sent disconnect message to monitor");
             }
+        }
+        Ok(())
+    }
+
+    /// 状態更新メッセージを送信
+    pub async fn send_state_update(&self, status: SessionStatus, message: String) -> Result<()> {
+        if let Some(ref grpc_client) = self.grpc_client {
+            if self.verbose {
+                eprintln!("📤 Sending gRPC state update: {status:?}");
+            }
+            grpc_client.send_state_update(status, Some(message)).await?;
+        } else if self.connection.is_some() {
+            if self.verbose {
+                eprintln!("📤 Sending state update: {status:?}");
+            }
+            let status_debug = format!("{status:?}");
+            Self::send_unix_message(
+                &self.connection_config,
+                &LauncherToMonitor::StateUpdate {
+                    launcher_id: self.launcher_id.clone(),
+                    session_id: self.session_id.clone(),
+                    status,
+                    ui_above_text: Some(message),
+                    timestamp: Utc::now(),
+                },
+                self.verbose,
+                &format!("state update: {status_debug}"),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// コンテキスト更新メッセージを送信
+    pub async fn send_context_update(&self, ui_above_text: String) -> Result<()> {
+        if let Some(ref grpc_client) = self.grpc_client {
+            if self.verbose {
+                eprintln!("📤 Sending gRPC context update");
+            }
+            grpc_client.send_context_update(Some(ui_above_text)).await?;
+        } else if self.connection.is_some() {
+            if self.verbose {
+                eprintln!("📤 Sending context update");
+            }
+            Self::send_unix_message(
+                &self.connection_config,
+                &LauncherToMonitor::ContextUpdate {
+                    launcher_id: self.launcher_id.clone(),
+                    session_id: self.session_id.clone(),
+                    ui_above_text: Some(ui_above_text),
+                    timestamp: Utc::now(),
+                },
+                self.verbose,
+                "context update",
+            )
+            .await?;
         }
         Ok(())
     }
@@ -277,6 +387,7 @@ impl TransportLauncherClient {
         let log_file = self.log_file.clone();
         let tool_type = self.tool_wrapper.get_tool_type();
         let connection_config = self.connection_config.clone();
+        let grpc_client = self.grpc_client.clone();
 
         // PTYのリサイズ機能を有効にするため、Arc<Mutex<>>でラップ
         let pty_master_shared = std::sync::Arc::new(std::sync::Mutex::new(pty_master));
@@ -289,6 +400,7 @@ impl TransportLauncherClient {
                 log_file,
                 tool_type,
                 connection_config,
+                grpc_client,
             };
             Self::handle_pty_bidirectional_io(pty_master_shared, config, _terminal_guard).await;
         });
@@ -366,6 +478,7 @@ impl TransportLauncherClient {
             verbose: config_clone.verbose,
             tool_type: config_clone.tool_type,
             connection_config: config_clone.connection_config,
+            grpc_client: config_clone.grpc_client.clone(),
         };
         let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout_with_monitoring(
@@ -494,6 +607,7 @@ impl TransportLauncherClient {
             let launcher_id_clone = config.launcher_id.clone();
             let session_id_clone = config.session_id.clone();
             let config_clone = config.connection_config.clone();
+            let grpc_client_clone = config.grpc_client.clone();
             let verbose = config.verbose;
 
             tokio::spawn(async move {
@@ -503,6 +617,7 @@ impl TransportLauncherClient {
                     launcher_id_clone,
                     session_id_clone,
                     config_clone,
+                    grpc_client_clone,
                     verbose,
                 )
                 .await;
@@ -660,6 +775,7 @@ impl TransportLauncherClient {
         launcher_id: String,
         session_id: String,
         connection_config: ConnectionConfig,
+        grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
         verbose: bool,
     ) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -710,15 +826,21 @@ impl TransportLauncherClient {
                     eprintln!("🔄 Periodic status update: {current_status:?}");
                 }
 
-                Self::send_status_update_simple(
-                    &launcher_id,
-                    &session_id,
+                if let Err(e) = Self::send_periodic_status_update(
                     current_status,
                     current_ui_context.clone(),
                     &connection_config,
+                    grpc_client.as_ref(),
+                    &launcher_id,
+                    &session_id,
                     verbose,
                 )
-                .await;
+                .await
+                {
+                    if verbose {
+                        eprintln!("⚠️  Failed to send periodic status update: {e}");
+                    }
+                }
 
                 last_ui_context = current_ui_context;
             } else if context_changed {
@@ -726,88 +848,115 @@ impl TransportLauncherClient {
                     eprintln!("🔄 Context update: {current_ui_context:?}");
                 }
 
-                Self::send_context_update_simple(
-                    &launcher_id,
-                    &session_id,
+                if let Err(e) = Self::send_periodic_context_update(
                     current_ui_context.clone(),
                     &connection_config,
+                    grpc_client.as_ref(),
+                    &launcher_id,
+                    &session_id,
                     verbose,
                 )
-                .await;
+                .await
+                {
+                    if verbose {
+                        eprintln!("⚠️  Failed to send periodic context update: {e}");
+                    }
+                }
 
                 last_ui_context = current_ui_context;
             }
         }
     }
 
-    /// 簡易状態更新送信
-    async fn send_status_update_simple(
-        launcher_id: &str,
-        session_id: &str,
+    /// 定期的な状態更新送信
+    async fn send_periodic_status_update(
         status: SessionStatus,
         ui_above_text: Option<String>,
         connection_config: &ConnectionConfig,
-        verbose: bool,
-    ) {
-        match connect_client(connection_config).await {
-            Ok(mut connection) => {
-                let update_msg = LauncherToMonitor::StateUpdate {
-                    launcher_id: launcher_id.to_string(),
-                    session_id: session_id.to_string(),
-                    status: status.clone(),
-                    ui_above_text,
-                    timestamp: chrono::Utc::now(),
-                };
-
-                if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
-                    let _ = connection.write_all(&msg_bytes).await;
-                    let _ = connection.write_all(b"\n").await;
-                    let _ = connection.flush().await;
-
-                    if verbose {
-                        eprintln!("📤 Sent periodic status update: {status:?}");
-                    }
-                }
-            }
-            Err(_) => {
-                if verbose {
-                    eprintln!("⚠️  Failed to send periodic status update (monitor not available)");
-                }
-            }
-        }
-    }
-
-    /// 簡易コンテキスト更新送信
-    async fn send_context_update_simple(
+        grpc_client: Option<&crate::grpc_client::GrpcLauncherClient>,
         launcher_id: &str,
         session_id: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        if let Some(grpc_client) = grpc_client {
+            if verbose {
+                eprintln!("📤 Sent gRPC periodic status update: {status:?}");
+            }
+            grpc_client.send_state_update(status, ui_above_text).await?;
+        } else {
+            let status_debug = format!("{status:?}");
+            Self::send_unix_message(
+                connection_config,
+                &LauncherToMonitor::StateUpdate {
+                    launcher_id: launcher_id.to_string(),
+                    session_id: session_id.to_string(),
+                    status,
+                    ui_above_text,
+                    timestamp: Utc::now(),
+                },
+                verbose,
+                &format!("periodic status update: {status_debug}"),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// 定期的なコンテキスト更新送信
+    async fn send_periodic_context_update(
         ui_above_text: Option<String>,
         connection_config: &ConnectionConfig,
+        grpc_client: Option<&crate::grpc_client::GrpcLauncherClient>,
+        launcher_id: &str,
+        session_id: &str,
         verbose: bool,
-    ) {
-        match connect_client(connection_config).await {
-            Ok(mut connection) => {
-                let context_msg = LauncherToMonitor::ContextUpdate {
+    ) -> Result<()> {
+        if let Some(grpc_client) = grpc_client {
+            grpc_client.send_context_update(ui_above_text).await?;
+            if verbose {
+                eprintln!("📤 Sent gRPC context update");
+            }
+        } else {
+            Self::send_unix_message(
+                connection_config,
+                &LauncherToMonitor::ContextUpdate {
                     launcher_id: launcher_id.to_string(),
                     session_id: session_id.to_string(),
                     ui_above_text,
-                    timestamp: chrono::Utc::now(),
-                };
+                    timestamp: Utc::now(),
+                },
+                verbose,
+                "context update",
+            )
+            .await?;
+        }
+        Ok(())
+    }
 
-                if let Ok(msg_bytes) = serde_json::to_vec(&context_msg) {
-                    let _ = connection.write_all(&msg_bytes).await;
-                    let _ = connection.write_all(b"\n").await;
-                    let _ = connection.flush().await;
+    /// Unix socket経由でメッセージを送信するヘルパー
+    async fn send_unix_message(
+        connection_config: &ConnectionConfig,
+        message: &LauncherToMonitor,
+        verbose: bool,
+        operation_name: &str,
+    ) -> Result<()> {
+        match connect_client(connection_config).await {
+            Ok(mut connection) => {
+                let msg_bytes = serde_json::to_vec(message)?;
+                connection.write_all(&msg_bytes).await?;
+                connection.write_all(b"\n").await?;
+                connection.flush().await?;
 
-                    if verbose {
-                        eprintln!("📤 Sent context update");
-                    }
-                }
-            }
-            Err(_) => {
                 if verbose {
-                    eprintln!("⚠️  Failed to send context update (monitor not available)");
+                    eprintln!("📤 Sent {operation_name}");
                 }
+                Ok(())
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("⚠️  Failed to send {operation_name} (monitor not available)");
+                }
+                Err(e)
             }
         }
     }
@@ -1081,4 +1230,17 @@ pub fn force_restore_terminal() {
 }
 
 // 新しいクライアントをLauncherClientとしてエクスポート
+impl Drop for TransportLauncherClient {
+    fn drop(&mut self) {
+        // Drop時に同期的に切断メッセージを送信することは困難なため、
+        // 主にログ出力とクリーンアップに集中
+        if self.verbose && (self.connection.is_some() || self.grpc_client.is_some()) {
+            eprintln!("📤 TransportLauncherClient dropping - connection cleanup");
+        }
+
+        // 注意: 実際の切断メッセージ送信は run_claude() の終了時に行われる
+        // または main関数のシグナルハンドリングで明示的に呼び出される
+    }
+}
+
 pub type LauncherClient = TransportLauncherClient;

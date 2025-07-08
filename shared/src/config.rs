@@ -25,22 +25,10 @@ pub struct Config {
 }
 
 /// 接続関連の設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionSettings {
-    /// 接続タイプ ("unix" または "tcp")
-    #[serde(default = "default_connection_type")]
-    pub r#type: String,
-
-    /// TCP接続時のバインドアドレス
-    #[serde(default = "default_tcp_bind_addr")]
-    pub tcp_bind_addr: String,
-
     /// Unix socket接続時のソケットパス
     pub unix_socket_path: Option<PathBuf>,
-
-    /// TCP接続時のIP許可リスト（空の場合は全て許可）
-    #[serde(default)]
-    pub tcp_allowed_ips: Vec<String>,
 }
 
 /// ログ関連の設定
@@ -68,26 +56,6 @@ pub struct UiSettings {
     /// 将来の実装用プレースホルダー
     #[serde(default)]
     _placeholder: bool,
-}
-
-impl Default for ConnectionSettings {
-    fn default() -> Self {
-        Self {
-            r#type: default_connection_type(),
-            tcp_bind_addr: default_tcp_bind_addr(),
-            unix_socket_path: None,
-            tcp_allowed_ips: Vec::new(),
-        }
-    }
-}
-
-// デフォルト値関数
-fn default_connection_type() -> String {
-    "unix".to_string()
-}
-
-fn default_tcp_bind_addr() -> String {
-    "127.0.0.1:3001".to_string()
 }
 
 impl Config {
@@ -173,13 +141,7 @@ impl Config {
     /// 環境変数で設定を上書き
     pub fn apply_env_overrides(&mut self) {
         // 接続設定
-        if let Ok(tcp_addr) = std::env::var("CLIMONITOR_TCP_ADDR") {
-            self.connection.r#type = "tcp".to_string();
-            self.connection.tcp_bind_addr = tcp_addr;
-        }
-
         if let Ok(socket_path) = std::env::var("CLIMONITOR_SOCKET_PATH") {
-            self.connection.r#type = "unix".to_string();
             self.connection.unix_socket_path = Some(PathBuf::from(socket_path));
         }
 
@@ -195,24 +157,20 @@ impl Config {
 
     /// 設定からConnectionConfigを生成
     pub fn to_connection_config(&self) -> ConnectionConfig {
-        match self.connection.r#type.as_str() {
-            "tcp" => ConnectionConfig::Tcp {
-                bind_addr: self.connection.tcp_bind_addr.clone(),
-                allowed_ips: self.connection.tcp_allowed_ips.clone(),
-            },
-            #[cfg(unix)]
-            _ => ConnectionConfig::Unix {
+        #[cfg(unix)]
+        {
+            ConnectionConfig::Unix {
                 socket_path: self
                     .connection
                     .unix_socket_path
                     .clone()
                     .unwrap_or_else(|| std::env::temp_dir().join("climonitor.sock")),
-            },
-            #[cfg(not(unix))]
-            _ => ConnectionConfig::Tcp {
-                bind_addr: "127.0.0.1:3001".to_string(),
-                allowed_ips: Vec::new(),
-            },
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // Unix以外のプラットフォームでは現在サポートしていない
+            panic!("Unix socket is not supported on this platform")
         }
     }
 
@@ -221,8 +179,6 @@ impl Config {
         let mut config = Self::default();
 
         // サンプル値を設定
-        config.connection.r#type = "unix".to_string();
-        config.connection.tcp_bind_addr = "127.0.0.1:3001".to_string();
         config.connection.unix_socket_path = Some(PathBuf::from("/tmp/climonitor.sock"));
 
         config.logging.verbose = false;
@@ -241,8 +197,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.connection.r#type, "unix");
-        assert_eq!(config.connection.tcp_bind_addr, "127.0.0.1:3001");
+        assert!(config.connection.unix_socket_path.is_none());
         assert!(!config.logging.verbose);
         assert!(!config.notification._placeholder);
         assert!(!config.ui._placeholder);
@@ -264,8 +219,7 @@ mod tests {
     fn test_config_deserialization() {
         let toml_content = r#"
 [connection]
-type = "tcp"
-tcp_bind_addr = "0.0.0.0:3002"
+unix_socket_path = "/tmp/test.sock"
 
 [logging]
 verbose = true
@@ -274,8 +228,10 @@ verbose = true
 "#;
 
         let config: Config = toml::from_str(toml_content).unwrap();
-        assert_eq!(config.connection.r#type, "tcp");
-        assert_eq!(config.connection.tcp_bind_addr, "0.0.0.0:3002");
+        assert_eq!(
+            config.connection.unix_socket_path,
+            Some(PathBuf::from("/tmp/test.sock"))
+        );
         assert!(config.logging.verbose);
         // 通知とUI設定は未実装のためテストなし
     }
@@ -293,10 +249,9 @@ verbose = true
         let loaded_config = Config::from_file(&config_path).unwrap();
 
         // 基本的な設定が正しく保存・読み込みされることを確認
-        assert_eq!(loaded_config.connection.r#type, config.connection.r#type);
         assert_eq!(
-            loaded_config.connection.tcp_bind_addr,
-            config.connection.tcp_bind_addr
+            loaded_config.connection.unix_socket_path,
+            config.connection.unix_socket_path
         );
 
         // テスト用ファイルを削除
@@ -308,144 +263,42 @@ verbose = true
         let mut config = Config::default();
 
         // 環境変数を設定
-        std::env::set_var("CLIMONITOR_TCP_ADDR", "192.168.1.1:4000");
+        std::env::set_var("CLIMONITOR_SOCKET_PATH", "/tmp/test.sock");
         std::env::set_var("CLIMONITOR_VERBOSE", "true");
 
         config.apply_env_overrides();
 
-        assert_eq!(config.connection.r#type, "tcp");
-        assert_eq!(config.connection.tcp_bind_addr, "192.168.1.1:4000");
+        assert_eq!(
+            config.connection.unix_socket_path,
+            Some(PathBuf::from("/tmp/test.sock"))
+        );
         assert!(config.logging.verbose);
 
         // 環境変数をクリア
-        std::env::remove_var("CLIMONITOR_TCP_ADDR");
+        std::env::remove_var("CLIMONITOR_SOCKET_PATH");
         std::env::remove_var("CLIMONITOR_VERBOSE");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_to_connection_config() {
         let mut config = Config::default();
 
         // Unix設定をテスト
-        config.connection.r#type = "unix".to_string();
         config.connection.unix_socket_path = Some(PathBuf::from("/tmp/test.sock"));
 
         match config.to_connection_config() {
             ConnectionConfig::Unix { socket_path } => {
                 assert_eq!(socket_path, PathBuf::from("/tmp/test.sock"));
             }
-            _ => panic!("Expected Unix connection config"),
         }
 
-        // TCP設定をテスト
-        config.connection.r#type = "tcp".to_string();
-        config.connection.tcp_bind_addr = "localhost:8080".to_string();
-
+        // デフォルトパスをテスト
+        config.connection.unix_socket_path = None;
         match config.to_connection_config() {
-            ConnectionConfig::Tcp {
-                bind_addr,
-                allowed_ips,
-            } => {
-                assert_eq!(bind_addr, "localhost:8080");
-                assert!(allowed_ips.is_empty());
+            ConnectionConfig::Unix { socket_path } => {
+                assert_eq!(socket_path, std::env::temp_dir().join("climonitor.sock"));
             }
-            _ => panic!("Expected TCP connection config"),
         }
-
-        // TCP IP許可リスト設定をテスト
-        config.connection.tcp_allowed_ips = vec![
-            "127.0.0.1".to_string(),
-            "192.168.1.0/24".to_string(),
-            "localhost".to_string(),
-        ];
-
-        match config.to_connection_config() {
-            ConnectionConfig::Tcp {
-                bind_addr,
-                allowed_ips,
-            } => {
-                assert_eq!(bind_addr, "localhost:8080");
-                assert_eq!(allowed_ips.len(), 3);
-                assert!(allowed_ips.contains(&"127.0.0.1".to_string()));
-                assert!(allowed_ips.contains(&"192.168.1.0/24".to_string()));
-                assert!(allowed_ips.contains(&"localhost".to_string()));
-            }
-            _ => panic!("Expected TCP connection config"),
-        }
-    }
-
-    #[test]
-    fn test_ip_allow_list_functionality() {
-        use crate::ConnectionConfig;
-        use std::net::SocketAddr;
-        use std::str::FromStr;
-
-        // 許可リストが空の場合（全て許可）
-        let config = ConnectionConfig::Tcp {
-            bind_addr: "127.0.0.1:3001".to_string(),
-            allowed_ips: vec![],
-        };
-
-        let addr = SocketAddr::from_str("192.168.1.100:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        // 特定IPを許可
-        let config = ConnectionConfig::Tcp {
-            bind_addr: "127.0.0.1:3001".to_string(),
-            allowed_ips: vec!["127.0.0.1".to_string(), "192.168.1.100".to_string()],
-        };
-
-        // 許可されたIP
-        let addr = SocketAddr::from_str("127.0.0.1:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        let addr = SocketAddr::from_str("192.168.1.100:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        // 許可されていないIP
-        let addr = SocketAddr::from_str("192.168.1.101:12345").unwrap();
-        assert!(!config.is_ip_allowed(&addr));
-
-        // CIDR記法のテスト
-        let config = ConnectionConfig::Tcp {
-            bind_addr: "127.0.0.1:3001".to_string(),
-            allowed_ips: vec!["192.168.1.0/24".to_string()],
-        };
-
-        // ネットワーク内のIP
-        let addr = SocketAddr::from_str("192.168.1.50:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        let addr = SocketAddr::from_str("192.168.1.255:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        // ネットワーク外のIP
-        let addr = SocketAddr::from_str("192.168.2.1:12345").unwrap();
-        assert!(!config.is_ip_allowed(&addr));
-
-        // 特別なパターンのテスト
-        let config = ConnectionConfig::Tcp {
-            bind_addr: "127.0.0.1:3001".to_string(),
-            allowed_ips: vec!["localhost".to_string()],
-        };
-
-        // localhostパターン
-        let addr = SocketAddr::from_str("127.0.0.1:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        let addr = SocketAddr::from_str("[::1]:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
-
-        // localhost以外
-        let addr = SocketAddr::from_str("192.168.1.1:12345").unwrap();
-        assert!(!config.is_ip_allowed(&addr));
-
-        // Unix socketは常に許可
-        let config = ConnectionConfig::Unix {
-            socket_path: PathBuf::from("/tmp/test.sock"),
-        };
-
-        let addr = SocketAddr::from_str("0.0.0.0:12345").unwrap();
-        assert!(config.is_ip_allowed(&addr));
     }
 }

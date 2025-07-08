@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package climonitor;
+
+import "google/protobuf/timestamp.proto";
+
+// Monitor Service - 双方向ストリーミング
+service MonitorService {
+  // Launcher → Monitor のストリーミング通信
+  rpc StreamSession(stream LauncherMessage) returns (stream MonitorMessage);
+}
+
+// Launcher → Monitor メッセージ
+message LauncherMessage {
+  oneof message {
+    ConnectRequest connect = 1;
+    StateUpdate state_update = 2;
+    ContextUpdate context_update = 3;
+    DisconnectRequest disconnect = 4;
+  }
+}
+
+// Monitor → Launcher メッセージ
+message MonitorMessage {
+  oneof message {
+    ConnectResponse connect_response = 1;
+    RequestReconnect request_reconnect = 2;
+    Ping ping = 3;
+  }
+}
+
+// 接続要求
+message ConnectRequest {
+  string launcher_id = 1;
+  optional string project = 2;
+  CliToolType tool_type = 3;
+  repeated string claude_args = 4;
+  string working_dir = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+// 接続応答
+message ConnectResponse {
+  string launcher_id = 1;
+  bool success = 2;
+  optional string message = 3;
+}
+
+// 状態更新
+message StateUpdate {
+  string launcher_id = 1;
+  string session_id = 2;
+  SessionStatus status = 3;
+  optional string ui_above_text = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// コンテキスト更新
+message ContextUpdate {
+  string launcher_id = 1;
+  string session_id = 2;
+  optional string ui_above_text = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// 切断要求
+message DisconnectRequest {
+  string launcher_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// 再接続要求 (Monitor → Launcher)
+message RequestReconnect {
+  string launcher_id = 1;
+  string reason = 2;
+}
+
+// Ping/Pong (接続確認)
+message Ping {
+  uint64 sequence = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// セッション状態
+enum SessionStatus {
+  CONNECTED = 0;
+  BUSY = 1;
+  WAITING_INPUT = 2;
+  IDLE = 3;
+  ERROR = 4;
+}
+
+// CLIツールタイプ
+enum CliToolType {
+  CLAUDE = 0;
+  GEMINI = 1;
+}

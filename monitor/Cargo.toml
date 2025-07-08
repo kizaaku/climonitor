@@ -26,6 +26,11 @@ chrono = { version = "0.4", features = ["serde"] }
 term_size.workspace = true
 home.workspace = true
 
+# gRPC dependencies
+tonic = "0.10"
+prost = "0.12"
+tokio-stream = "0.1"
+
 [dev-dependencies]
 climonitor-launcher = { path = "../launcher" }
 tempfile = "3.8"
