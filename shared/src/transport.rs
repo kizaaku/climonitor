@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::net::SocketAddr;
 
-use crate::{LauncherToMonitor, SessionStatus, CliToolType};
+use crate::{CliToolType, LauncherToMonitor, SessionStatus};
 
 /// 接続設定
 #[derive(Debug, Clone)]

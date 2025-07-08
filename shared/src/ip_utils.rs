@@ -36,8 +36,8 @@ fn is_ip_match(peer_ip: &IpAddr, pattern: &str) -> bool {
 
     // CIDR記法のチェック
     if let Some((network_str, prefix_len_str)) = pattern.split_once('/') {
-        if let (Ok(network_ip), Ok(prefix_len)) = 
-            (IpAddr::from_str(network_str), prefix_len_str.parse::<u8>()) 
+        if let (Ok(network_ip), Ok(prefix_len)) =
+            (IpAddr::from_str(network_str), prefix_len_str.parse::<u8>())
         {
             return is_ip_in_cidr(peer_ip, &network_ip, prefix_len);
         }
@@ -62,23 +62,25 @@ fn is_ip_in_cidr(peer_ip: &IpAddr, network_ip: &IpAddr, prefix_len: u8) -> bool 
             }
             let peer_bytes = peer.octets();
             let network_bytes = network.octets();
-            
+
             let full_bytes = prefix_len / 8;
             let remaining_bits = prefix_len % 8;
-            
+
             // 完全バイトの比較
             if peer_bytes[..full_bytes as usize] != network_bytes[..full_bytes as usize] {
                 return false;
             }
-            
+
             // 残りビットの比較
             if remaining_bits > 0 && full_bytes < 16 {
                 let mask = !((1u8 << (8 - remaining_bits)) - 1);
-                if peer_bytes[full_bytes as usize] & mask != network_bytes[full_bytes as usize] & mask {
+                if peer_bytes[full_bytes as usize] & mask
+                    != network_bytes[full_bytes as usize] & mask
+                {
                     return false;
                 }
             }
-            
+
             true
         }
         _ => false, // IPv4とIPv6の混在は不一致
@@ -100,7 +102,7 @@ mod tests {
     fn test_ip_match_localhost() {
         let ip = IpAddr::from_str("127.0.0.1").unwrap();
         assert!(is_ip_match(&ip, "localhost"));
-        
+
         let ip6 = IpAddr::from_str("::1").unwrap();
         assert!(is_ip_match(&ip6, "localhost"));
     }

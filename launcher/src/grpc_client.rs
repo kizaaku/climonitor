@@ -113,7 +113,7 @@ impl GrpcLauncherClient {
                 if bind_addr.starts_with("http://") || bind_addr.starts_with("https://") {
                     bind_addr.clone()
                 } else {
-                    format!("http://{}", bind_addr)
+                    format!("http://{bind_addr}")
                 }
             }
         };

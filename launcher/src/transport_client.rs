@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
 use portable_pty::MasterPty;
-use serde_json;
 use std::path::PathBuf;
 use tokio::task::JoinHandle;
 
@@ -145,7 +144,7 @@ impl TransportLauncherClient {
 
     /// 接続メッセージを送信
     async fn send_connect_message(&mut self) -> Result<()> {
-        let connect_msg = LauncherToMonitor::Connect {
+        let _connect_msg = LauncherToMonitor::Connect {
             launcher_id: self.launcher_id.clone(),
             project: self.project_name.clone(),
             tool_type: self.tool_wrapper.get_tool_type(),
@@ -186,15 +185,17 @@ impl TransportLauncherClient {
                     self.launcher_id, self.project_name
                 );
             }
-            sender.send_connect(
-                self.project_name.clone(),
-                self.tool_wrapper.get_tool_type(),
-                self.tool_wrapper.get_args().to_vec(),
-                self.tool_wrapper
-                    .get_working_dir()
-                    .cloned()
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
-            ).await?;
+            sender
+                .send_connect(
+                    self.project_name.clone(),
+                    self.tool_wrapper.get_tool_type(),
+                    self.tool_wrapper.get_args().to_vec(),
+                    self.tool_wrapper
+                        .get_working_dir()
+                        .cloned()
+                        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                )
+                .await?;
             if self.verbose {
                 eprintln!("✅ Connect message sent successfully");
             }
@@ -231,12 +232,14 @@ impl TransportLauncherClient {
             if self.verbose {
                 eprintln!("📤 Sending state update: {status:?}");
             }
-            sender.send_status_update(
-                self.session_id.clone(),
-                status,
-                Utc::now(),
-                self.project_name.clone(),
-            ).await?;
+            sender
+                .send_status_update(
+                    self.session_id.clone(),
+                    status,
+                    Utc::now(),
+                    self.project_name.clone(),
+                )
+                .await?;
         }
         Ok(())
     }
@@ -252,11 +255,9 @@ impl TransportLauncherClient {
             if self.verbose {
                 eprintln!("📤 Sending context update");
             }
-            sender.send_context_update(
-                self.session_id.clone(),
-                ui_above_text,
-                Utc::now(),
-            ).await?;
+            sender
+                .send_context_update(self.session_id.clone(), ui_above_text, Utc::now())
+                .await?;
         }
         Ok(())
     }
@@ -858,7 +859,7 @@ impl TransportLauncherClient {
         ui_above_text: Option<String>,
         connection_config: &ConnectionConfig,
         grpc_client: Option<&crate::grpc_client::GrpcLauncherClient>,
-        launcher_id: &str,
+        _launcher_id: &str,
         session_id: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -868,15 +869,12 @@ impl TransportLauncherClient {
             }
             grpc_client.send_state_update(status, ui_above_text).await?;
         } else {
-            let status_debug = format!("{status:?}");
+            let _status_debug = format!("{status:?}");
             // Create a temporary sender for this operation
             if let Ok(sender) = climonitor_shared::create_message_sender(connection_config).await {
-                sender.send_status_update(
-                    session_id.to_string(),
-                    status,
-                    Utc::now(),
-                    None,
-                ).await?;
+                sender
+                    .send_status_update(session_id.to_string(), status, Utc::now(), None)
+                    .await?;
             }
         }
         Ok(())
@@ -887,7 +885,7 @@ impl TransportLauncherClient {
         ui_above_text: Option<String>,
         connection_config: &ConnectionConfig,
         grpc_client: Option<&crate::grpc_client::GrpcLauncherClient>,
-        launcher_id: &str,
+        _launcher_id: &str,
         session_id: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -899,11 +897,13 @@ impl TransportLauncherClient {
         } else {
             // Create a temporary sender for this operation
             if let Ok(sender) = climonitor_shared::create_message_sender(connection_config).await {
-                sender.send_context_update(
-                    session_id.to_string(),
-                    ui_above_text.unwrap_or_default(),
-                    Utc::now(),
-                ).await?;
+                sender
+                    .send_context_update(
+                        session_id.to_string(),
+                        ui_above_text.unwrap_or_default(),
+                        Utc::now(),
+                    )
+                    .await?;
             }
         }
         Ok(())

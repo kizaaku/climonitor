@@ -1,14 +1,14 @@
 pub mod cli_tool;
 pub mod config;
+pub mod ip_utils;
 pub mod message_conversion;
 pub mod protocol;
 pub mod transport;
-pub mod ip_utils;
 
 // 具体的なトランスポート実装
+pub mod grpc_transport;
 #[cfg(unix)]
 pub mod unix_transport;
-pub mod grpc_transport;
 
 // gRPC generated code
 pub mod grpc {

@@ -1,11 +1,8 @@
 use clap::Parser;
 
-use climonitor_monitor::grpc_server::start_grpc_server;
 use climonitor_monitor::live_ui::LiveUI;
-use climonitor_monitor::session_manager::SessionManager;
 use climonitor_monitor::transport_server::TransportMonitorServer;
 use climonitor_shared::{Config, ConnectionConfig};
-use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "climonitor")]
@@ -70,14 +67,19 @@ async fn main() -> anyhow::Result<()> {
         config.logging.log_file = Some(log_file);
     }
 
+    // gRPCフラグの処理
+    if cli.grpc {
+        config.connection.grpc = Some(climonitor_shared::GrpcSettings {
+            bind_addr: cli.bind,
+            allowed_ips: vec!["127.0.0.1".to_string()],
+        });
+    }
+
     // 接続設定を生成
     let connection_config = config.to_connection_config();
 
-    if cli.grpc {
-        // gRPCモード：gRPC Monitor サーバーとして動作
-        run_grpc_mode(cli.bind, config.logging.verbose, config.logging.log_file).await?;
-    } else if cli.live {
-        // ライブモード：Monitor サーバーとして動作
+    if cli.live || cli.grpc {
+        // ライブモード：Monitor サーバーとして動作 (gRPCも含む)
         run_live_mode(
             connection_config,
             config.logging.verbose,
@@ -134,70 +136,6 @@ async fn run_live_mode(
                 Err(e) => {
                     eprintln!("❌ Monitor server error: {e}");
                     return Err(e);
-                }
-            }
-        }
-
-        result = live_ui.run() => {
-            match result {
-                Ok(_) => {
-                    if verbose {
-                        println!("✅ Live UI finished successfully");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("❌ Live UI error: {e}");
-                    return Err(e);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// gRPCモード実行
-async fn run_grpc_mode(
-    bind_addr: String,
-    verbose: bool,
-    _log_file: Option<std::path::PathBuf>,
-) -> anyhow::Result<()> {
-    if verbose {
-        println!("🚀 Starting gRPC monitor server...");
-        println!("🔧 Bind address: {bind_addr}");
-    }
-
-    // SessionManager作成（LiveUIに合わせてRwLockを使用）
-    let session_manager = Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
-
-    // UI更新チャネル作成（broadcast channelを使用）
-    let (ui_tx, ui_rx) = tokio::sync::broadcast::channel(100);
-
-    // gRPCサーバー用に同じSessionManagerとUI更新チャネルを共有
-    let grpc_session_manager = Arc::clone(&session_manager);
-    let grpc_ui_tx = ui_tx.clone();
-    let grpc_bind_addr = bind_addr.clone();
-    let grpc_handle = tokio::spawn(async move {
-        if let Err(e) = start_grpc_server(grpc_session_manager, grpc_ui_tx, &grpc_bind_addr).await {
-            eprintln!("❌ gRPC server error: {e}");
-        }
-    });
-
-    // LiveUI開始
-    let mut live_ui = LiveUI::new(session_manager, ui_rx, verbose);
-
-    // gRPCサーバーとUIを並行実行
-    tokio::select! {
-        result = grpc_handle => {
-            match result {
-                Ok(_) => {
-                    if verbose {
-                        println!("✅ gRPC server finished successfully");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("❌ gRPC server task error: {e}");
-                    return Err(anyhow::anyhow!("gRPC server task failed: {e}"));
                 }
             }
         }

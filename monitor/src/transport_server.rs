@@ -1,7 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use climonitor_shared::{
-    transport::{MessageHandler, MessageReceiver}, ConnectionConfig, LauncherToMonitor,
+    transport::{MessageHandler, MessageReceiver},
+    ConnectionConfig, LauncherToMonitor,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,8 +30,8 @@ pub struct TransportMonitorServer {
     ui_update_sender: broadcast::Sender<()>,
     task_handles: Vec<JoinHandle<()>>,
     verbose: bool,
-    log_file: Option<PathBuf>,
-    message_receiver: Option<Box<dyn MessageReceiver>>,
+    _log_file: Option<PathBuf>,
+    _message_receiver: Option<Box<dyn MessageReceiver>>,
 }
 
 impl TransportMonitorServer {
@@ -46,8 +47,8 @@ impl TransportMonitorServer {
             ui_update_sender,
             task_handles: Vec::new(),
             verbose,
-            log_file,
-            message_receiver: None,
+            _log_file: log_file,
+            _message_receiver: None,
         })
     }
 
@@ -61,13 +62,14 @@ impl TransportMonitorServer {
         let handler = MonitorMessageHandler {
             session_manager: Arc::clone(&self.session_manager),
             ui_update_sender: self.ui_update_sender.clone(),
-            connections: Arc::clone(&self.connections),
+            _connections: Arc::clone(&self.connections),
             verbose: self.verbose,
         };
 
         // Create message receiver
-        let mut message_receiver = climonitor_shared::create_message_receiver(&self.config, Box::new(handler)).await?;
-        
+        let mut message_receiver =
+            climonitor_shared::create_message_receiver(&self.config, Box::new(handler)).await?;
+
         if self.verbose {
             println!("⚡ Server running, waiting for launcher connections...");
         }
@@ -171,7 +173,7 @@ impl TransportMonitorServer {
 struct MonitorMessageHandler {
     session_manager: Arc<RwLock<SessionManager>>,
     ui_update_sender: broadcast::Sender<()>,
-    connections: Arc<RwLock<HashMap<String, ConnectionInfo>>>,
+    _connections: Arc<RwLock<HashMap<String, ConnectionInfo>>>,
     verbose: bool,
 }
 
@@ -230,13 +232,8 @@ impl MessageHandler for MonitorMessageHandler {
             }
 
             // 通知送信（StateUpdateの場合のみ）
-            if let Some((
-                tool_name,
-                duration_seconds,
-                status,
-                ui_above_text,
-                previous_status,
-            )) = notification_info
+            if let Some((tool_name, duration_seconds, status, ui_above_text, previous_status)) =
+                notification_info
             {
                 TransportMonitorServer::send_notification_if_needed(
                     tool_name,
@@ -251,7 +248,7 @@ impl MessageHandler for MonitorMessageHandler {
 
         // UI更新通知
         let _ = self.ui_update_sender.send(());
-        
+
         Ok(())
     }
 }

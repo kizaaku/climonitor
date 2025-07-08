@@ -29,7 +29,7 @@ impl UnixMessageSender {
 
     async fn send_message(&self, message: LauncherToMonitor) -> Result<()> {
         let stream = UnixStream::connect(&self.socket_path).await?;
-        let (mut reader, mut writer) = stream.into_split();
+        let (_reader, mut writer) = stream.into_split();
 
         // メッセージをJSONにシリアライズして送信
         let json = serde_json::to_string(&message)?;
@@ -66,7 +66,7 @@ impl MessageSender for UnixMessageSender {
         session_id: String,
         status: SessionStatus,
         timestamp: DateTime<Utc>,
-        project_name: Option<String>,
+        _project_name: Option<String>,
     ) -> Result<()> {
         let message = LauncherToMonitor::StateUpdate {
             launcher_id: self.launcher_id.clone(),
@@ -106,7 +106,7 @@ impl MessageSender for UnixMessageSender {
 pub struct UnixMessageReceiver {
     socket_path: PathBuf,
     handler: std::sync::Arc<dyn MessageHandler>,
-    listener: Option<UnixListener>,
+    _listener: Option<UnixListener>,
 }
 
 impl UnixMessageReceiver {
@@ -115,12 +115,13 @@ impl UnixMessageReceiver {
             ConnectionConfig::Unix { socket_path } => Ok(Self {
                 socket_path: socket_path.clone(),
                 handler: std::sync::Arc::from(handler),
-                listener: None,
+                _listener: None,
             }),
             _ => anyhow::bail!("Unix transport requires Unix socket configuration"),
         }
     }
 
+    #[allow(dead_code)]
     async fn handle_connection(&self, stream: UnixStream) -> Result<()> {
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
@@ -131,19 +132,19 @@ impl UnixMessageReceiver {
                 Ok(0) => break, // 接続終了
                 Ok(_) => {
                     // JSONメッセージをデシリアライズ
-                    match serde_json::from_str::<LauncherToMonitor>(&line.trim()) {
+                    match serde_json::from_str::<LauncherToMonitor>(line.trim()) {
                         Ok(message) => {
                             if let Err(e) = self.handler.handle_message(message).await {
-                                eprintln!("⚠️  Failed to handle message: {}", e);
+                                eprintln!("⚠️  Failed to handle message: {e}");
                             }
                         }
                         Err(e) => {
-                            eprintln!("⚠️  Failed to parse message: {}", e);
+                            eprintln!("⚠️  Failed to parse message: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to read from Unix socket: {}", e);
+                    eprintln!("⚠️  Failed to read from Unix socket: {e}");
                     break;
                 }
             }
@@ -162,7 +163,10 @@ impl MessageReceiver for UnixMessageReceiver {
         }
 
         let listener = UnixListener::bind(&self.socket_path)?;
-        println!("🚀 Unix socket server listening on: {}", self.socket_path.display());
+        println!(
+            "🚀 Unix socket server listening on: {}",
+            self.socket_path.display()
+        );
 
         loop {
             match listener.accept().await {
@@ -171,12 +175,12 @@ impl MessageReceiver for UnixMessageReceiver {
                     // 各接続を並行処理
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection_static(&*handler, stream).await {
-                            eprintln!("⚠️  Connection handling failed: {}", e);
+                            eprintln!("⚠️  Connection handling failed: {e}");
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to accept Unix socket connection: {}", e);
+                    eprintln!("⚠️  Failed to accept Unix socket connection: {e}");
                 }
             }
         }
@@ -206,19 +210,19 @@ impl UnixMessageReceiver {
                 Ok(0) => break, // 接続終了
                 Ok(_) => {
                     // JSONメッセージをデシリアライズ
-                    match serde_json::from_str::<LauncherToMonitor>(&line.trim()) {
+                    match serde_json::from_str::<LauncherToMonitor>(line.trim()) {
                         Ok(message) => {
                             if let Err(e) = handler.handle_message(message).await {
-                                eprintln!("⚠️  Failed to handle message: {}", e);
+                                eprintln!("⚠️  Failed to handle message: {e}");
                             }
                         }
                         Err(e) => {
-                            eprintln!("⚠️  Failed to parse message: {}", e);
+                            eprintln!("⚠️  Failed to parse message: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to read from Unix socket: {}", e);
+                    eprintln!("⚠️  Failed to read from Unix socket: {e}");
                     break;
                 }
             }

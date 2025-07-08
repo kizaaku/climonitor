@@ -30,7 +30,7 @@ pub struct GrpcSettings {
     /// gRPCサーバーのバインドアドレス
     #[serde(default = "default_grpc_bind_addr")]
     pub bind_addr: String,
-    
+
     /// IP許可リスト
     #[serde(default)]
     pub allowed_ips: Vec<String>,
@@ -45,7 +45,7 @@ fn default_grpc_bind_addr() -> String {
 pub struct ConnectionSettings {
     /// Unix socket接続時のソケットパス
     pub unix_socket_path: Option<PathBuf>,
-    
+
     /// gRPC接続設定
     pub grpc: Option<GrpcSettings>,
 }

@@ -23,7 +23,7 @@ use crate::{
 
 /// gRPC クライアント実装
 pub struct GrpcMessageSender {
-    client: MonitorServiceClient<Channel>,
+    _client: MonitorServiceClient<Channel>,
     launcher_id: String,
     tx: mpsc::Sender<GrpcLauncherMessage>,
 }
@@ -32,11 +32,12 @@ impl GrpcMessageSender {
     pub async fn new(config: &ConnectionConfig) -> Result<Self> {
         match config {
             ConnectionConfig::Grpc { bind_addr, .. } => {
-                let endpoint = if bind_addr.starts_with("http://") || bind_addr.starts_with("https://") {
-                    bind_addr.clone()
-                } else {
-                    format!("http://{}", bind_addr)
-                };
+                let endpoint =
+                    if bind_addr.starts_with("http://") || bind_addr.starts_with("https://") {
+                        bind_addr.clone()
+                    } else {
+                        format!("http://{bind_addr}")
+                    };
 
                 let client = MonitorServiceClient::connect(endpoint).await?;
                 let launcher_id = crate::generate_connection_id();
@@ -57,20 +58,20 @@ impl GrpcMessageSender {
                                         // Monitor → Launcherメッセージの処理（現在は未実装）
                                     }
                                     Err(e) => {
-                                        eprintln!("⚠️  Error receiving monitor message: {}", e);
+                                        eprintln!("⚠️  Error receiving monitor message: {e}");
                                         break;
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("⚠️  gRPC stream error: {}", e);
+                            eprintln!("⚠️  gRPC stream error: {e}");
                         }
                     }
                 });
 
                 Ok(Self {
-                    client,
+                    _client: client,
                     launcher_id,
                     tx,
                 })
@@ -81,9 +82,10 @@ impl GrpcMessageSender {
 
     async fn send_grpc_message(&self, message: LauncherToMonitor) -> Result<()> {
         let grpc_message = grpc_conversion::to_grpc_launcher_message(message)?;
-        self.tx.send(grpc_message).await.map_err(|e| {
-            anyhow::anyhow!("Failed to send gRPC message: {}", e)
-        })?;
+        self.tx
+            .send(grpc_message)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send gRPC message: {}", e))?;
         Ok(())
     }
 }
@@ -113,7 +115,7 @@ impl MessageSender for GrpcMessageSender {
         session_id: String,
         status: SessionStatus,
         timestamp: DateTime<Utc>,
-        project_name: Option<String>,
+        _project_name: Option<String>,
     ) -> Result<()> {
         let message = LauncherToMonitor::StateUpdate {
             launcher_id: self.launcher_id.clone(),
@@ -234,16 +236,16 @@ impl MonitorService for GrpcMonitorService {
                             Ok(message) => {
                                 // ハンドラーに渡す
                                 if let Err(e) = handler.handle_message(message).await {
-                                    eprintln!("⚠️  Failed to handle gRPC message: {}", e);
+                                    eprintln!("⚠️  Failed to handle gRPC message: {e}");
                                 }
                             }
                             Err(e) => {
-                                eprintln!("⚠️  Failed to convert gRPC message: {}", e);
+                                eprintln!("⚠️  Failed to convert gRPC message: {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("⚠️  gRPC stream error: {}", e);
+                        eprintln!("⚠️  gRPC stream error: {e}");
                         break;
                     }
                 }
