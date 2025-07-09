@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,7 +41,7 @@ jobs:
         components: clippy
     - uses: Swatinem/rust-cache@v2
     - name: Run clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings
 
   build:
     name: Build
@@ -55,3 +55,13 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --release --verbose
+    - name: Test build artifacts (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        ./target/release/climonitor --version
+        ./target/release/climonitor-launcher --version
+    - name: Test build artifacts (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        ./target/release/climonitor.exe --version
+        ./target/release/climonitor-launcher.exe --version
