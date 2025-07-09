@@ -40,6 +40,10 @@ fn default_grpc_bind_addr() -> String {
     "127.0.0.1:50051".to_string()
 }
 
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
 /// 接続関連の設定
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionSettings {
@@ -57,8 +61,31 @@ pub struct LoggingSettings {
     #[serde(default)]
     pub verbose: bool,
 
+    /// ログレベル (error, warn, info, debug, trace)
+    #[serde(default = "default_log_level")]
+    pub level: String,
+
+    /// 有効にするログカテゴリ (空の場合は全て有効)
+    #[serde(default)]
+    pub categories: Vec<String>,
+
     /// ログファイルのパス（実装済み：CLIツールの出力保存用）
     pub log_file: Option<PathBuf>,
+}
+
+impl LoggingSettings {
+    /// ログシステムを初期化
+    pub fn init_logging(&self) {
+        // ログレベルを設定
+        let level = crate::logging::LogLevel::from(self.level.as_str());
+        crate::logging::set_log_level(level);
+
+        // 必要に応じてログ出力先を設定
+        if let Some(_log_file) = &self.log_file {
+            // ファイル出力は将来実装
+            // TODO: ファイル出力の実装
+        }
+    }
 }
 
 /// 通知関連の設定（現在は実装されていない - ~/.climonitor/notify.sh が存在する場合のみ動作）

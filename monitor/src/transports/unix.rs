@@ -42,16 +42,25 @@ impl UnixMessageReceiver {
                     match serde_json::from_str::<LauncherToMonitor>(line.trim()) {
                         Ok(message) => {
                             if let Err(e) = handler.handle_message(message).await {
-                                eprintln!("⚠️  Failed to handle message: {e}");
+                                climonitor_shared::log_warn!(
+                                    climonitor_shared::LogCategory::UnixSocket,
+                                    "⚠️  Failed to handle message: {e}"
+                                );
                             }
                         }
                         Err(e) => {
-                            eprintln!("⚠️  Failed to parse message: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::UnixSocket,
+                                "⚠️  Failed to parse message: {e}"
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to read from Unix socket: {e}");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::UnixSocket,
+                        "⚠️  Failed to read from Unix socket: {e}"
+                    );
                     break;
                 }
             }
@@ -82,12 +91,18 @@ impl MessageReceiver for UnixMessageReceiver {
                     // 各接続を並行処理
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection_static(&*handler, stream).await {
-                            eprintln!("⚠️  Connection handling failed: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::UnixSocket,
+                                "⚠️  Connection handling failed: {e}"
+                            );
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Failed to accept Unix socket connection: {e}");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::UnixSocket,
+                        "⚠️  Failed to accept Unix socket connection: {e}"
+                    );
                 }
             }
         }

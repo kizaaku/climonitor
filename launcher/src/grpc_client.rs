@@ -37,14 +37,20 @@ impl GrpcTransportClient {
                                 Self::handle_monitor_message(monitor_msg).await;
                             }
                             Err(e) => {
-                                eprintln!("⚠️  Error receiving monitor message: {e}");
+                                climonitor_shared::log_warn!(
+                                    climonitor_shared::LogCategory::Grpc,
+                                    "⚠️  Error receiving monitor message: {e}"
+                                );
                                 break;
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  gRPC stream error: {e}");
+                    climonitor_shared::log_error!(
+                        climonitor_shared::LogCategory::Grpc,
+                        "⚠️  gRPC stream error: {e}"
+                    );
                 }
             }
         });
@@ -129,7 +135,10 @@ impl GrpcLauncherClient {
         let grpc_client = match GrpcTransportClient::connect(&endpoint).await {
             Ok(client) => Some(client),
             Err(e) => {
-                eprintln!("⚠️  Failed to connect to gRPC monitor: {e}");
+                climonitor_shared::log_warn!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "⚠️  Failed to connect to gRPC monitor: {e}"
+                );
                 None
             }
         };

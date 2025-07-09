@@ -54,12 +54,18 @@ impl MonitorService for CliMonitorService {
                         )
                         .await
                         {
-                            eprintln!("⚠️  Error handling launcher message: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::Grpc,
+                                "⚠️  Error handling launcher message: {e}"
+                            );
                             break;
                         }
                     }
                     Err(e) => {
-                        eprintln!("⚠️  Error receiving launcher message: {e}");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::Grpc,
+                            "⚠️  Error receiving launcher message: {e}"
+                        );
                         break;
                     }
                 }
@@ -105,19 +111,28 @@ impl CliMonitorService {
             {
                 let mut manager = session_manager.write().await;
                 if let Err(e) = manager.handle_message(protocol_msg) {
-                    eprintln!("⚠️  Session manager error: {e}");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::Grpc,
+                        "⚠️  Session manager error: {e}"
+                    );
                 }
             }
 
             // UI更新チャネルにメッセージを送信
             if let Err(e) = ui_tx.send(()) {
-                eprintln!("⚠️  Failed to send UI update: {e}");
+                climonitor_shared::log_warn!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "⚠️  Failed to send UI update: {e}"
+                );
             }
 
             // 応答を送信
             if let Some(response) = response_opt {
                 if let Err(e) = tx.send(Ok(response)).await {
-                    eprintln!("⚠️  Failed to send connect response: {e}");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::Grpc,
+                        "⚠️  Failed to send connect response: {e}"
+                    );
                 }
             }
         }

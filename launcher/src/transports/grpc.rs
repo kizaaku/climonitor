@@ -46,7 +46,10 @@ impl GrpcMessageSender {
                             }
                         }
                         Err(e) => {
-                            eprintln!("⚠️  gRPC stream error: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::Grpc,
+                                "gRPC stream error: {e}"
+                            );
                         }
                     }
                 });

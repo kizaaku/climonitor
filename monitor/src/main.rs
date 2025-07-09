@@ -75,6 +75,9 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // ログシステムの初期化
+    config.logging.init_logging();
+
     // 接続設定を生成
     let connection_config = config.to_connection_config();
 
@@ -134,7 +137,7 @@ async fn run_live_mode(
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Monitor server error: {e}");
+                    climonitor_shared::log_error!(climonitor_shared::LogCategory::System, "Monitor server error: {e}");
                     return Err(e);
                 }
             }
@@ -148,7 +151,7 @@ async fn run_live_mode(
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Live UI error: {e}");
+                    climonitor_shared::log_error!(climonitor_shared::LogCategory::Display, "Live UI error: {e}");
                     return Err(e);
                 }
             }

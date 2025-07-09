@@ -116,6 +116,9 @@ async fn main() -> Result<()> {
         config.logging.log_file = Some(log_file_path);
     }
 
+    // ログシステムの初期化
+    config.logging.init_logging();
+
     // 接続設定を生成
     let connection_config = config.to_connection_config();
 
@@ -212,7 +215,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ CLI tool execution failed: {e}");
+                            climonitor_shared::log_error!(climonitor_shared::LogCategory::System, "CLI tool execution failed: {e}");
                             if let Some(guard) = _terminal_guard {
                                 drop(guard); // ターミナル設定を明示的に復元
                             }
@@ -265,7 +268,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ CLI tool execution failed: {e}");
+                            climonitor_shared::log_error!(climonitor_shared::LogCategory::System, "❌ CLI tool execution failed: {e}");
                             // Windows版では正常終了（TerminalGuardのDropが自動的に実行される）
                             std::process::exit(1);
                         }
@@ -323,7 +326,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("❌ CLI tool execution failed: {e}");
+                        climonitor_shared::log_error!(climonitor_shared::LogCategory::System, "❌ CLI tool execution failed: {e}");
                         if let Some(guard) = _terminal_guard {
                             drop(guard); // ターミナル設定を明示的に復元
                         }
@@ -376,7 +379,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("❌ CLI tool execution failed: {e}");
+                        climonitor_shared::log_error!(climonitor_shared::LogCategory::System, "❌ CLI tool execution failed: {e}");
                         // Windows版では正常終了（TerminalGuardのDropが自動的に実行される）
                         std::process::exit(1);
                     }

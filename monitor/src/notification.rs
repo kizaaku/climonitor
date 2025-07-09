@@ -84,7 +84,10 @@ impl NotificationManager {
             // エラーは無視（デバッグ時のみログ出力）
             if let Err(_e) = result {
                 #[cfg(debug_assertions)]
-                eprintln!("⚠️  Notification script failed: {_e}");
+                climonitor_shared::log_warn!(
+                    climonitor_shared::LogCategory::Notification,
+                    "⚠️  Notification script failed: {_e}"
+                );
             }
         });
     }

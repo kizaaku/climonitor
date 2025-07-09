@@ -64,7 +64,7 @@ impl TransportMonitorServer {
             // Start the message receiver
             result = message_receiver.start_server() => {
                 if let Err(e) = result {
-                    eprintln!("❌ Server error: {e}");
+                    climonitor_shared::log_error!(climonitor_shared::LogCategory::Transport, "Server error: {e}");
                 }
             }
 
@@ -210,7 +210,10 @@ impl MessageHandler for MonitorMessageHandler {
 
         // セッションマネージャーで処理
         if let Err(e) = self.session_manager.write().await.handle_message(message) {
-            eprintln!("⚠️  Message handling error: {e}");
+            climonitor_shared::log_warn!(
+                climonitor_shared::LogCategory::Session,
+                "Message handling error: {e}"
+            );
         } else {
             if self.verbose {
                 println!("✅ Message processed successfully");

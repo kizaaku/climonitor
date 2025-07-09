@@ -107,16 +107,25 @@ impl MonitorService for GrpcMonitorService {
                             Ok(message) => {
                                 // ハンドラーに渡す
                                 if let Err(e) = handler.handle_message(message).await {
-                                    eprintln!("⚠️  Failed to handle gRPC message: {e}");
+                                    climonitor_shared::log_warn!(
+                                        climonitor_shared::LogCategory::Grpc,
+                                        "⚠️  Failed to handle gRPC message: {e}"
+                                    );
                                 }
                             }
                             Err(e) => {
-                                eprintln!("⚠️  Failed to convert gRPC message: {e}");
+                                climonitor_shared::log_warn!(
+                                    climonitor_shared::LogCategory::Grpc,
+                                    "⚠️  Failed to convert gRPC message: {e}"
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("⚠️  gRPC stream error: {e}");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::Grpc,
+                            "⚠️  gRPC stream error: {e}"
+                        );
                         break;
                     }
                 }

@@ -23,9 +23,11 @@ impl ScreenClaudeStateDetector {
             ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
 
         if verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Claude,
                 "🖥️  [CLAUDE_INIT] Initialized screen buffer with {}x{} (rows x cols)",
-                pty_size.rows, pty_size.cols
+                pty_size.rows,
+                pty_size.cols
             );
         }
 
@@ -62,9 +64,12 @@ impl ScreenClaudeStateDetector {
         let now = Instant::now();
 
         if self.verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Claude,
                 "🔍 [CLAUDE_STATE] esc_interrupt: {} → {}, current: {}",
-                self.previous_had_esc_interrupt, has_esc_interrupt, self.current_state
+                self.previous_had_esc_interrupt,
+                has_esc_interrupt,
+                self.current_state
             );
         }
 
@@ -72,7 +77,10 @@ impl ScreenClaudeStateDetector {
         if self.previous_had_esc_interrupt && !has_esc_interrupt {
             // "esc to interrupt"が消えた = 実行完了
             if self.verbose {
-                eprintln!("✅ [CLAUDE_COMPLETION] 'esc to interrupt' disappeared → Idle");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Claude,
+                    "✅ [CLAUDE_COMPLETION] 'esc to interrupt' disappeared → Idle"
+                );
             }
             self.last_state_change = Some(now);
             self.previous_had_esc_interrupt = false;
@@ -80,7 +88,10 @@ impl ScreenClaudeStateDetector {
         } else if !self.previous_had_esc_interrupt && has_esc_interrupt {
             // "esc to interrupt"が現れた = 実行開始
             if self.verbose {
-                eprintln!("🚀 [CLAUDE_START] 'esc to interrupt' appeared → Busy");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Claude,
+                    "🚀 [CLAUDE_START] 'esc to interrupt' appeared → Busy"
+                );
             }
             self.last_state_change = Some(now);
             self.previous_had_esc_interrupt = true;
@@ -165,7 +176,10 @@ impl StateDetector for ScreenClaudeStateDetector {
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim_end();
             if !trimmed.is_empty() {
-                eprintln!("  {i:2}: {trimmed}");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Claude,
+                    "  {i:2}: {trimmed}"
+                );
             }
         }
     }

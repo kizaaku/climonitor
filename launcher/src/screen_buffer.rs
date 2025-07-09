@@ -74,7 +74,8 @@ impl ScreenBuffer {
         let grid = vec![vec![Cell::empty(); buffer_cols]; rows];
 
         if verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🖥️  [BUFFER_INIT] Screen buffer: {rows}x{buffer_cols} (PTY {rows}x{cols} + 1 col)"
             );
         }
@@ -118,14 +119,16 @@ impl ScreenBuffer {
         };
 
         if self.verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "📺 [VISIBLE_CHECK] grid.len()={}, self.rows={}, start_row={}",
                 self.grid.len(),
                 self.rows,
                 start_row
             );
             if start_row > 0 {
-                eprintln!(
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Screen,
                     "📺 [VISIBLE_AREA] Showing visible area: rows {}-{} of total {}",
                     start_row,
                     self.grid.len() - 1,
@@ -156,7 +159,8 @@ impl ScreenBuffer {
         };
 
         if self.verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🔍 [UI_BOX_DEBUG] Analyzing {} lines for UI boxes (grid offset: {}):",
                 lines.len(),
                 start_row
@@ -164,7 +168,10 @@ impl ScreenBuffer {
             for (i, line) in lines.iter().enumerate() {
                 if !line.trim().is_empty() {
                     let row_num = start_row + i;
-                    eprintln!("  {row_num}: '{line}'");
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Screen,
+                        "  {row_num}: '{line}'"
+                    );
                 }
             }
         }
@@ -189,7 +196,7 @@ impl ScreenBuffer {
                         let start_row = ui_box.start_row;
                         let end_row = ui_box.end_row;
                         let content_count = ui_box.content_lines.len();
-                        eprintln!("📦 [COMPLETE_BOX] Found complete UI box at rows {start_row}-{end_row} with {content_count} content lines");
+                        climonitor_shared::log_debug!(climonitor_shared::LogCategory::Screen, "📦 [COMPLETE_BOX] Found complete UI box at rows {start_row}-{end_row} with {content_count} content lines");
                     }
 
                     boxes.push(ui_box);
@@ -205,7 +212,8 @@ impl ScreenBuffer {
                 partial_box.end_row += start_row;
 
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Screen,
                         "📦 [PARTIAL_BOX] Found partial UI box at rows {}-{} with {} content lines",
                         partial_box.start_row,
                         partial_box.end_row,
@@ -272,7 +280,7 @@ impl ScreenBuffer {
             // 中間に別の╭があった場合は無効なboxとして扱う
             if line.trim_start().starts_with('╭') {
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_debug!(climonitor_shared::LogCategory::Screen,
                         "📦 [INVALID_BOX] Found nested ╭ at row {idx} while parsing box from row {start_row}"
                     );
                 }
@@ -357,7 +365,8 @@ impl ScreenBuffer {
                             || ch == '╮'
                             || ch == '╯')
                     {
-                        eprintln!(
+                        climonitor_shared::log_debug!(
+                            climonitor_shared::LogCategory::Screen,
                             "🔄 [INSERT_SCROLL] '{}' triggered scroll at ({}, {}) grid_len={}",
                             ch,
                             self.cursor_row,
@@ -375,9 +384,11 @@ impl ScreenBuffer {
     /// 画面をクリア
     fn clear_screen(&mut self) {
         if self.verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🧹 [CLEAR_SCREEN] Clearing entire screen buffer ({}x{})",
-                self.rows, self.cols
+                self.rows,
+                self.cols
             );
         }
 
@@ -403,7 +414,8 @@ impl ScreenBuffer {
         let actual_scroll = n.min(scroll_region_size);
 
         if self.verbose && actual_scroll > 0 {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🔄 [SCROLL_UP] Scrolling {} lines in region {}-{}, grid_size: {}",
                 actual_scroll,
                 self.scroll_top,
@@ -431,7 +443,8 @@ impl ScreenBuffer {
                 self.grid[self.scroll_bottom] = vec![Cell::empty(); self.cols];
 
                 if self.verbose && !old_content.trim().is_empty() {
-                    eprintln!(
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Screen,
                         "🗑️  [SCROLL_CLEAR] Bottom line cleared: '{}'",
                         old_content.trim()
                     );
@@ -450,9 +463,12 @@ impl ScreenBuffer {
         let actual_scroll = n.min(scroll_region_size);
 
         if self.verbose && actual_scroll > 0 {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🔄 [SCROLL_DOWN] Scrolling {} lines in region {}-{}",
-                actual_scroll, self.scroll_top, self.scroll_bottom
+                actual_scroll,
+                self.scroll_top,
+                self.scroll_bottom
             );
         }
 
@@ -515,7 +531,10 @@ impl ScreenBuffer {
         let actual_insert = n.min(self.scroll_bottom - insert_row + 1);
 
         if self.verbose && actual_insert > 0 {
-            eprintln!("📝 [INSERT_LINES] Inserting {actual_insert} lines at row {insert_row}");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
+                "📝 [INSERT_LINES] Inserting {actual_insert} lines at row {insert_row}"
+            );
         }
 
         // 挿入位置から下の行を下にシフト（グリッドサイズ固定）
@@ -543,7 +562,10 @@ impl ScreenBuffer {
         let actual_delete = n.min(self.scroll_bottom - delete_row + 1);
 
         if self.verbose && actual_delete > 0 {
-            eprintln!("🗑️  [DELETE_LINES] Deleting {actual_delete} lines at row {delete_row}");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
+                "🗑️  [DELETE_LINES] Deleting {actual_delete} lines at row {delete_row}"
+            );
         }
 
         // 削除位置から下の行を上にシフト（グリッドサイズ固定）
@@ -571,9 +593,12 @@ impl ScreenBuffer {
         let actual_insert = n.min(self.cols - insert_col);
 
         if self.verbose && actual_insert > 0 {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "📝 [INSERT_CHARS] Inserting {} chars at row {} col {}",
-                actual_insert, self.cursor_row, insert_col
+                actual_insert,
+                self.cursor_row,
+                insert_col
             );
         }
 
@@ -599,9 +624,12 @@ impl ScreenBuffer {
         let actual_delete = n.min(row.len() - delete_col);
 
         if self.verbose && actual_delete > 0 {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🗑️  [DELETE_CHARS] Deleting {} chars at row {} col {}",
-                actual_delete, self.cursor_row, delete_col
+                actual_delete,
+                self.cursor_row,
+                delete_col
             );
         }
 
@@ -633,7 +661,8 @@ impl Perform for ScreenBuffer {
     fn print(&mut self, c: char) {
         if self.verbose {
             if c == '╭' || c == '╰' || c == '│' || c == '─' || c == '╮' || c == '╯' {
-                eprintln!(
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Screen,
                     "🖨️  [PRINT_BOX] '{}' at ({}, {}) [U+{:04X}] grid_size={}x{}",
                     c,
                     self.cursor_row,
@@ -643,7 +672,8 @@ impl Perform for ScreenBuffer {
                     self.cols
                 );
             } else if !c.is_whitespace() && c != '\u{0}' {
-                eprintln!(
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Screen,
                     "🖨️  [PRINT_CHAR] '{}' at ({}, {}) grid_size={}x{}",
                     c,
                     self.cursor_row,
@@ -659,9 +689,13 @@ impl Perform for ScreenBuffer {
     /// 実行文字（制御文字）の処理
     fn execute(&mut self, byte: u8) {
         if self.verbose && byte != b'\0' {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "⚡ [EXECUTE] Control char: 0x{:02X} ({}) at ({}, {})",
-                byte, byte as char, self.cursor_row, self.cursor_col
+                byte,
+                byte as char,
+                self.cursor_row,
+                self.cursor_col
             );
         }
         match byte {
@@ -694,7 +728,10 @@ impl Perform for ScreenBuffer {
             }
             _ => {
                 if self.verbose {
-                    eprintln!("Unhandled execute: 0x{byte:02x}");
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Screen,
+                        "Unhandled execute: 0x{byte:02x}"
+                    );
                 }
             }
         }
@@ -724,7 +761,8 @@ impl Perform for ScreenBuffer {
     fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, c: char) {
         if self.verbose {
             let param_str: Vec<String> = params.iter().map(|p| format!("{p:?}")).collect();
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Screen,
                 "🎛️  [CSI] Dispatching '{}' with params: [{}]",
                 c,
                 param_str.join(", ")
@@ -740,7 +778,7 @@ impl Perform for ScreenBuffer {
                 let new_col = col.saturating_sub(1);
 
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_debug!(climonitor_shared::LogCategory::Screen,
                         "📍 [CURSOR_POS] Moving cursor to ({new_row}, {new_col}) [params: row={row}, col={col}]"
                     );
                 }
@@ -755,9 +793,13 @@ impl Perform for ScreenBuffer {
                 // 列位置は変更しない（VTE仕様準拠）
 
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Screen,
                         "⬆️  [CURSOR_UP] Moving cursor up {} lines: {} -> {}, col remains {}",
-                        count, old_row, self.cursor_row, self.cursor_col
+                        count,
+                        old_row,
+                        self.cursor_row,
+                        self.cursor_col
                     );
                 }
             }
@@ -783,9 +825,11 @@ impl Perform for ScreenBuffer {
                     0 => {
                         // カーソルから画面末尾まで消去
                         if self.verbose {
-                            eprintln!(
+                            climonitor_shared::log_debug!(
+                                climonitor_shared::LogCategory::Screen,
                                 "🧹 [CLEAR_TO_END] Clearing from cursor ({}, {}) to end of screen",
-                                self.cursor_row, self.cursor_col
+                                self.cursor_row,
+                                self.cursor_col
                             );
                         }
                         self.clear_from_cursor_to_end();
@@ -795,14 +839,17 @@ impl Perform for ScreenBuffer {
                         if self.verbose {
                             let cursor_row = self.cursor_row;
                             let cursor_col = self.cursor_col;
-                            eprintln!("🧹 [CLEAR_TO_START] Clearing from start of screen to cursor ({cursor_row}, {cursor_col})");
+                            climonitor_shared::log_debug!(climonitor_shared::LogCategory::Screen, "🧹 [CLEAR_TO_START] Clearing from start of screen to cursor ({cursor_row}, {cursor_col})");
                         }
                         self.clear_from_start_to_cursor();
                     }
                     2 => {
                         // 画面全体消去
                         if self.verbose {
-                            eprintln!("🧹 [CLEAR_SCREEN] Clearing entire screen");
+                            climonitor_shared::log_debug!(
+                                climonitor_shared::LogCategory::Screen,
+                                "🧹 [CLEAR_SCREEN] Clearing entire screen"
+                            );
                         }
                         self.clear_screen();
                     }
@@ -846,14 +893,15 @@ impl Perform for ScreenBuffer {
                                 let cursor_row = self.cursor_row;
                                 let grid_height = self.grid.len();
                                 let cols = self.cols;
-                                eprintln!("🧹 [CLEAR_LINE] Mode=2 clearing entire line {cursor_row} (grid size: {grid_height}x{cols}) old_content: '{old_content}'");
+                                climonitor_shared::log_debug!(climonitor_shared::LogCategory::Screen, "🧹 [CLEAR_LINE] Mode=2 clearing entire line {cursor_row} (grid size: {grid_height}x{cols}) old_content: '{old_content}'");
                             }
                             if let Some(row) = self.grid.get_mut(self.cursor_row) {
                                 for cell in row.iter_mut() {
                                     *cell = Cell::empty();
                                 }
                                 if self.verbose {
-                                    eprintln!(
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
                                         "✅ [CLEAR_LINE] Line {} successfully cleared",
                                         self.cursor_row
                                     );
@@ -861,7 +909,7 @@ impl Perform for ScreenBuffer {
                             } else {
                                 let cursor_row = self.cursor_row;
                                 let grid_height = self.grid.len();
-                                eprintln!("❌ [CLEAR_LINE_ERROR] Cursor row {cursor_row} is out of bounds (grid height: {grid_height})");
+                                climonitor_shared::log_debug!(climonitor_shared::LogCategory::Screen, "❌ [CLEAR_LINE_ERROR] Cursor row {cursor_row} is out of bounds (grid height: {grid_height})");
                             }
                         }
                         _ => {}
@@ -907,9 +955,11 @@ impl Perform for ScreenBuffer {
                 self.scroll_bottom = bottom.saturating_sub(1).min(self.rows.saturating_sub(1));
 
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Screen,
                         "🔧 [DECSTBM] Set scroll region to {}-{}",
-                        self.scroll_top, self.scroll_bottom
+                        self.scroll_top,
+                        self.scroll_bottom
                     );
                 }
 
@@ -966,13 +1016,19 @@ impl Perform for ScreenBuffer {
                             25 => {
                                 // Show cursor
                                 if self.verbose {
-                                    eprintln!("👁️  [CURSOR_SHOW] Cursor visibility: ON");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "👁️  [CURSOR_SHOW] Cursor visibility: ON"
+                                    );
                                 }
                             }
                             1049 => {
                                 // Save cursor and switch to alternate screen buffer
                                 if self.verbose {
-                                    eprintln!("🔄 [ALT_SCREEN] Switch to alternate screen buffer");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "🔄 [ALT_SCREEN] Switch to alternate screen buffer"
+                                    );
                                 }
                                 // 現在の画面をクリア（alternate screenの効果をエミュレート）
                                 self.clear_screen();
@@ -980,7 +1036,8 @@ impl Perform for ScreenBuffer {
                             1047 => {
                                 // Switch to alternate screen buffer
                                 if self.verbose {
-                                    eprintln!(
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
                                         "🔄 [ALT_SCREEN] Switch to alternate screen buffer (1047)"
                                     );
                                 }
@@ -989,7 +1046,8 @@ impl Perform for ScreenBuffer {
                             47 => {
                                 // Switch to alternate screen buffer (older variant)
                                 if self.verbose {
-                                    eprintln!(
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
                                         "🔄 [ALT_SCREEN] Switch to alternate screen buffer (47)"
                                     );
                                 }
@@ -998,20 +1056,29 @@ impl Perform for ScreenBuffer {
                             2004 => {
                                 // Bracketed Paste Mode - Enable
                                 if self.verbose {
-                                    eprintln!("📋 [BRACKETED_PASTE] Enable bracketed paste mode");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "📋 [BRACKETED_PASTE] Enable bracketed paste mode"
+                                    );
                                 }
                                 // TODO: Set internal flag for bracketed paste mode
                             }
                             1004 => {
                                 // Focus Tracking Mode - Enable
                                 if self.verbose {
-                                    eprintln!("👀 [FOCUS_TRACKING] Enable focus tracking mode");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "👀 [FOCUS_TRACKING] Enable focus tracking mode"
+                                    );
                                 }
                                 // TODO: Set internal flag and implement focus event notification
                             }
                             _ => {
                                 if self.verbose {
-                                    eprintln!("❓ [MODE_SET] Unhandled mode: {value}");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "❓ [MODE_SET] Unhandled mode: {value}"
+                                    );
                                 }
                             }
                         }
@@ -1026,20 +1093,27 @@ impl Perform for ScreenBuffer {
                             25 => {
                                 // Hide cursor
                                 if self.verbose {
-                                    eprintln!("🙈 [CURSOR_HIDE] Cursor visibility: OFF");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "🙈 [CURSOR_HIDE] Cursor visibility: OFF"
+                                    );
                                 }
                             }
                             1049 => {
                                 // Restore cursor and switch to main screen buffer
                                 if self.verbose {
-                                    eprintln!("🔄 [MAIN_SCREEN] Switch to main screen buffer");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "🔄 [MAIN_SCREEN] Switch to main screen buffer"
+                                    );
                                 }
                                 // メイン画面に戻る（現在の実装では何もしない）
                             }
                             1047 => {
                                 // Switch to main screen buffer
                                 if self.verbose {
-                                    eprintln!(
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
                                         "🔄 [MAIN_SCREEN] Switch to main screen buffer (1047)"
                                     );
                                 }
@@ -1047,26 +1121,38 @@ impl Perform for ScreenBuffer {
                             47 => {
                                 // Switch to main screen buffer (older variant)
                                 if self.verbose {
-                                    eprintln!("🔄 [MAIN_SCREEN] Switch to main screen buffer (47)");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "🔄 [MAIN_SCREEN] Switch to main screen buffer (47)"
+                                    );
                                 }
                             }
                             2004 => {
                                 // Bracketed Paste Mode - Disable
                                 if self.verbose {
-                                    eprintln!("📋 [BRACKETED_PASTE] Disable bracketed paste mode");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "📋 [BRACKETED_PASTE] Disable bracketed paste mode"
+                                    );
                                 }
                                 // TODO: Clear internal flag for bracketed paste mode
                             }
                             1004 => {
                                 // Focus Tracking Mode - Disable
                                 if self.verbose {
-                                    eprintln!("👀 [FOCUS_TRACKING] Disable focus tracking mode");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "👀 [FOCUS_TRACKING] Disable focus tracking mode"
+                                    );
                                 }
                                 // TODO: Clear internal flag and stop focus event notification
                             }
                             _ => {
                                 if self.verbose {
-                                    eprintln!("❓ [MODE_RESET] Unhandled mode: {value}");
+                                    climonitor_shared::log_debug!(
+                                        climonitor_shared::LogCategory::Screen,
+                                        "❓ [MODE_RESET] Unhandled mode: {value}"
+                                    );
                                 }
                             }
                         }

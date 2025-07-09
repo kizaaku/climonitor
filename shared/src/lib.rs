@@ -1,6 +1,7 @@
 pub mod cli_tool;
 pub mod config;
 pub mod ip_utils;
+pub mod logging;
 pub mod message_conversion;
 pub mod protocol;
 pub mod transport;
@@ -12,5 +13,6 @@ pub mod grpc {
 
 pub use cli_tool::*;
 pub use config::*;
+pub use logging::*;
 pub use protocol::*;
 pub use transport::*;
