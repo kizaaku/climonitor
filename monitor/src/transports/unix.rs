@@ -38,8 +38,13 @@ impl UnixMessageReceiver {
             match reader.read_line(&mut line).await {
                 Ok(0) => break, // 接続終了
                 Ok(_) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
                     // JSONメッセージをデシリアライズ
-                    match serde_json::from_str::<LauncherToMonitor>(line.trim()) {
+                    match serde_json::from_str::<LauncherToMonitor>(trimmed) {
                         Ok(message) => {
                             if let Err(e) = handler.handle_message(message).await {
                                 climonitor_shared::log_warn!(
@@ -51,7 +56,8 @@ impl UnixMessageReceiver {
                         Err(e) => {
                             climonitor_shared::log_warn!(
                                 climonitor_shared::LogCategory::UnixSocket,
-                                "⚠️  Failed to parse message: {e}"
+                                "⚠️  Failed to parse message '{}': {e}",
+                                trimmed
                             );
                         }
                     }

@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
+use tokio::sync::Mutex;
 
 use climonitor_shared::{
     transport::MessageSender, CliToolType, ConnectionConfig, LauncherToMonitor, SessionStatus,
@@ -13,6 +14,7 @@ use climonitor_shared::{
 pub struct UnixMessageSender {
     socket_path: PathBuf,
     launcher_id: String,
+    connection: Mutex<Option<UnixStream>>,
 }
 
 impl UnixMessageSender {
@@ -21,22 +23,60 @@ impl UnixMessageSender {
             ConnectionConfig::Unix { socket_path } => Ok(Self {
                 socket_path: socket_path.clone(),
                 launcher_id: climonitor_shared::generate_connection_id(),
+                connection: Mutex::new(None),
+            }),
+            _ => anyhow::bail!("Unix transport requires Unix socket configuration"),
+        }
+    }
+
+    pub async fn new_with_launcher_id(
+        config: &ConnectionConfig,
+        launcher_id: String,
+    ) -> Result<Self> {
+        match config {
+            ConnectionConfig::Unix { socket_path } => Ok(Self {
+                socket_path: socket_path.clone(),
+                launcher_id,
+                connection: Mutex::new(None),
             }),
             _ => anyhow::bail!("Unix transport requires Unix socket configuration"),
         }
     }
 
     async fn send_message(&self, message: LauncherToMonitor) -> Result<()> {
-        let stream = UnixStream::connect(&self.socket_path).await?;
-        let (_reader, mut writer) = stream.into_split();
+        let mut connection_guard = self.connection.lock().await;
+
+        // 接続がない場合、新しい接続を作成
+        if connection_guard.is_none() {
+            let stream = UnixStream::connect(&self.socket_path).await?;
+            *connection_guard = Some(stream);
+        }
+
+        // 接続を取得
+        let stream = connection_guard.as_mut().unwrap();
 
         // メッセージをJSONにシリアライズして送信
         let json = serde_json::to_string(&message)?;
-        writer.write_all(json.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
 
-        Ok(())
+        // 送信を試行
+        match stream.write_all(json.as_bytes()).await {
+            Ok(()) => {
+                stream.write_all(b"\n").await?;
+                stream.flush().await?;
+                Ok(())
+            }
+            Err(_) => {
+                // 接続が切れている場合、再接続して再試行
+                let new_stream = UnixStream::connect(&self.socket_path).await?;
+                *connection_guard = Some(new_stream);
+
+                let stream = connection_guard.as_mut().unwrap();
+                stream.write_all(json.as_bytes()).await?;
+                stream.write_all(b"\n").await?;
+                stream.flush().await?;
+                Ok(())
+            }
+        }
     }
 }
 

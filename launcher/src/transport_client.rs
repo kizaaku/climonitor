@@ -998,11 +998,23 @@ impl TransportLauncherClient {
             }
             grpc_client.send_state_update(status, ui_above_text).await?;
         } else {
-            // Create a temporary sender for this operation
-            if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
+            // Create a temporary sender with the same launcher_id
+            if let Ok(sender) = crate::transports::create_message_sender_with_id(
+                connection_config,
+                _launcher_id.to_string(),
+            )
+            .await
+            {
                 sender
                     .send_status_update(session_id.to_string(), status, Utc::now(), None)
                     .await?;
+
+                // Send context update separately if ui_above_text is provided
+                if let Some(ui_text) = ui_above_text {
+                    sender
+                        .send_context_update(session_id.to_string(), ui_text, Utc::now())
+                        .await?;
+                }
             }
         }
         Ok(())
@@ -1026,8 +1038,13 @@ impl TransportLauncherClient {
                 );
             }
         } else {
-            // Create a temporary sender for this operation
-            if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
+            // Create a temporary sender with the same launcher_id
+            if let Ok(sender) = crate::transports::create_message_sender_with_id(
+                connection_config,
+                _launcher_id.to_string(),
+            )
+            .await
+            {
                 sender
                     .send_context_update(
                         session_id.to_string(),
