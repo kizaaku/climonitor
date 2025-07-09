@@ -4,7 +4,6 @@ use climonitor_shared::{
     transport::{MessageHandler, MessageReceiver},
     ConnectionConfig, LauncherToMonitor,
 };
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -13,19 +12,10 @@ use tokio::task::JoinHandle;
 use crate::notification::NotificationManager;
 use crate::session_manager::SessionManager;
 
-/// 接続情報
-#[derive(Debug)]
-struct ConnectionInfo {
-    id: String,
-    peer_addr: String,
-    connected_at: chrono::DateTime<chrono::Utc>,
-}
-
 /// 抽象化されたTransport Monitor サーバー
 pub struct TransportMonitorServer {
     config: ConnectionConfig,
     session_manager: Arc<RwLock<SessionManager>>,
-    connections: Arc<RwLock<HashMap<String, ConnectionInfo>>>,
     ui_update_sender: broadcast::Sender<()>,
     task_handles: Vec<JoinHandle<()>>,
     verbose: bool,
@@ -36,13 +26,11 @@ pub struct TransportMonitorServer {
 impl TransportMonitorServer {
     pub fn new(config: ConnectionConfig, verbose: bool, log_file: Option<PathBuf>) -> Result<Self> {
         let session_manager = Arc::new(RwLock::new(SessionManager::new()));
-        let connections = Arc::new(RwLock::new(HashMap::new()));
         let (ui_update_sender, _) = broadcast::channel(100);
 
         Ok(Self {
             config,
             session_manager,
-            connections,
             ui_update_sender,
             task_handles: Vec::new(),
             verbose,
@@ -61,7 +49,6 @@ impl TransportMonitorServer {
         let handler = MonitorMessageHandler {
             session_manager: Arc::clone(&self.session_manager),
             ui_update_sender: self.ui_update_sender.clone(),
-            _connections: Arc::clone(&self.connections),
             verbose: self.verbose,
         };
 
@@ -172,7 +159,6 @@ impl TransportMonitorServer {
 struct MonitorMessageHandler {
     session_manager: Arc<RwLock<SessionManager>>,
     ui_update_sender: broadcast::Sender<()>,
-    _connections: Arc<RwLock<HashMap<String, ConnectionInfo>>>,
     verbose: bool,
 }
 
