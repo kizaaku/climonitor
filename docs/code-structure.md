@@ -29,7 +29,7 @@ climonitor/
 - **責務**: TOML設定ファイル管理、設定優先度制御
 - **主要構造体**:
   - `Config` - メイン設定構造体
-  - `ConnectionSettings` - 接続設定（TCP/Unix, IP許可リスト）
+  - `ConnectionSettings` - 接続設定（gRPC/Unix, IP許可リスト）
   - `LoggingSettings` - ログ設定
 - **主要関数**:
   - `from_file()` - 設定ファイル読み込み

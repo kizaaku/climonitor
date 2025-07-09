@@ -1,25 +1,25 @@
-# climonitor TCP接続用サンプル設定ファイル
+# climonitor gRPC接続用サンプル設定ファイル
 # ~/.climonitor/config.toml にコピーして使用してください
 
 [connection]
-# 接続タイプ: "tcp" または "unix"
-type = "tcp"
+# 接続タイプ: "grpc" または "unix"
+type = "grpc"
 
-# TCP接続時のバインドアドレス
+# gRPC接続時のバインドアドレス
 # monitor: このアドレスでサーバーを起動
 # launcher: このアドレスに接続
-tcp_bind_addr = "127.0.0.1:3001"
+grpc_bind_addr = "127.0.0.1:50051"
 
-# TCP接続時のIP許可リスト（空の場合は全て許可）
+# gRPC接続時のIP許可リスト（空の場合は全て許可）
 # 単一IP、CIDR記法、"localhost"キーワードをサポート
-tcp_allowed_ips = [
+grpc_allowed_ips = [
     "127.0.0.1",           # ローカルホスト
     "192.168.1.0/24",      # ローカルネットワーク
     # "localhost",         # localhost（127.0.0.1と::1）
     # "any",               # 全てのIPを許可（推奨しない）
 ]
 
-# Unix socket接続時のソケットパス（tcpの場合は不要）
+# Unix socket接続時のソケットパス（grpcの場合は不要）
 # unix_socket_path = "/tmp/climonitor.sock"
 
 [logging]

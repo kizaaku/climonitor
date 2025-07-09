@@ -2,14 +2,14 @@
 # ~/.climonitor/config.toml にコピーして使用してください
 
 [connection]
-# 接続タイプ: "tcp" または "unix"
+# 接続タイプ: "grpc" または "unix"
 type = "unix"
 
 # Unix socket接続時のソケットパス
 unix_socket_path = "/tmp/climonitor.sock"
 
-# TCP接続時のバインドアドレス（unixの場合は不要）
-# tcp_bind_addr = "127.0.0.1:3001"
+# gRPC接続時のバインドアドレス（unixの場合は不要）
+# grpc_bind_addr = "127.0.0.1:50051"
 
 [logging]
 # 詳細ログを有効にするか
