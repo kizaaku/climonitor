@@ -31,6 +31,22 @@ export CLIMONITOR_GRPC_ADDR="127.0.0.1:50051"
 climonitor-launcher claude
 ```
 
+## ⚠️ 重要な制約
+
+**起動順序**: 現在のバージョンでは **Monitor を先に起動** してから Launcher を起動してください。
+
+```bash
+# ✅ 正しい順序
+climonitor --live          # 1. Monitor先起動
+climonitor-launcher claude # 2. Launcher後起動
+
+# ❌ 現在未対応
+climonitor-launcher claude # 1. Launcher先起動
+climonitor --live          # 2. Monitor後起動 → 接続失敗
+```
+
+**理由**: 現在のバージョンは再接続機能がないため、Monitor起動前にLauncherを起動すると接続できません。将来のバージョンで対応予定です。
+
 ## 📋 よく使うコマンド
 
 ### ビルドと実行

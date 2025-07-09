@@ -869,7 +869,6 @@ impl TransportLauncherClient {
             }
             grpc_client.send_state_update(status, ui_above_text).await?;
         } else {
-            let _status_debug = format!("{status:?}");
             // Create a temporary sender for this operation
             if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
                 sender

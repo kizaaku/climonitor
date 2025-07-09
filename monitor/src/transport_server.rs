@@ -15,7 +15,6 @@ use crate::session_manager::SessionManager;
 
 /// 接続情報
 #[derive(Debug)]
-#[allow(dead_code)]
 struct ConnectionInfo {
     id: String,
     peer_addr: String,
