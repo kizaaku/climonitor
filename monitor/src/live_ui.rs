@@ -129,8 +129,19 @@ impl LiveUI {
             return;
         }
 
-        for (project_name, launchers) in launchers_by_project {
+        // プロジェクト名でソートして順序を安定化
+        let mut sorted_projects: Vec<_> = launchers_by_project.into_iter().collect();
+        sorted_projects.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (project_name, mut launchers) in sorted_projects {
             println!("  📁 {project_name}:");
+
+            // プロジェクト内のlauncher順序を安定化（最終アクティビティ時刻の新しい順）
+            launchers.sort_by(|a, b| {
+                let a_time = a.1.map(|s| s.last_activity).unwrap_or(a.0.last_activity);
+                let b_time = b.1.map(|s| s.last_activity).unwrap_or(b.0.last_activity);
+                b_time.cmp(&a_time) // 新しい順（降順）
+            });
 
             for (launcher, session_opt) in launchers {
                 // Tool type display
