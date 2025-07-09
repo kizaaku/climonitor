@@ -86,7 +86,8 @@ impl fmt::Display for LogCategory {
 static GLOBAL_LOG_LEVEL: AtomicU8 = AtomicU8::new(LogLevel::Info as u8);
 
 /// ログメッセージの出力先
-static LOG_OUTPUT: OnceLock<Box<dyn Fn(&str) + Send + Sync>> = OnceLock::new();
+type LogOutputFn = Box<dyn Fn(&str) + Send + Sync>;
+static LOG_OUTPUT: OnceLock<LogOutputFn> = OnceLock::new();
 
 /// ログレベルを設定
 pub fn set_log_level(level: LogLevel) {
