@@ -7,6 +7,7 @@ use climonitor_shared::{Config, ConnectionConfig};
 #[derive(Parser)]
 #[command(name = "climonitor")]
 #[command(about = "Monitor CLI tool session status in real-time")]
+#[command(version)]
 struct Cli {
     /// Verbose output
     #[arg(short, long)]
