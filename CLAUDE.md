@@ -17,19 +17,35 @@ climonitor-launcher claude
 climonitor --live
 ```
 
-### 設定ファイル使用
+### gRPC接続使用
 
 ```bash
 # 1. 設定ファイル作成
-cp examples/config-tcp.toml ~/.climonitor/config.toml
+cp examples/config-grpc.toml ~/.climonitor/config.toml
 
-# 2. 設定ファイルでサーバー起動
+# 2. 設定ファイルでgRPCサーバー起動
 climonitor --config ~/.climonitor/config.toml --live
 
 # 3. 環境変数でClaude起動
-export CLIMONITOR_TCP_ADDR="127.0.0.1:3001"
+export CLIMONITOR_GRPC_ADDR="127.0.0.1:50051"
 climonitor-launcher claude
 ```
+
+## ⚠️ 重要な制約
+
+**起動順序**: 現在のバージョンでは **Monitor を先に起動** してから Launcher を起動してください。
+
+```bash
+# ✅ 正しい順序
+climonitor --live          # 1. Monitor先起動
+climonitor-launcher claude # 2. Launcher後起動
+
+# ❌ 現在未対応
+climonitor-launcher claude # 1. Launcher先起動
+climonitor --live          # 2. Monitor後起動 → 接続失敗
+```
+
+**理由**: 現在のバージョンは再接続機能がないため、Monitor起動前にLauncherを起動すると接続できません。将来のバージョンで対応予定です。
 
 ## 📋 よく使うコマンド
 
@@ -42,7 +58,7 @@ cargo build --release
 cargo run --bin climonitor -- --live
 
 # 設定ファイル付きでサーバー起動
-cargo run --bin climonitor -- --config examples/config-tcp.toml --live
+cargo run --bin climonitor -- --config examples/config-grpc.toml --live
 
 # launcherの実行
 cargo run --bin climonitor-launcher -- claude
@@ -86,6 +102,7 @@ cargo clippy --all-targets --all-features
 - **実行コンテキスト**: 「● マージ完了！」「✦ Got it.」などの実行内容
 - **複数セッション**: 複数のCLIツールを同時監視
 - **リアルタイム**: 即座に状態変化を検出
+- **通信方式**: Unix Socket（ローカル）/ gRPC（リモート対応）
 
 ## 📊 監視画面の見方
 
@@ -122,7 +139,7 @@ cargo clippy --all-targets --all-features
 │ PTY + Claude Code            │───>│ Monitor Dashboard   │
 │ ├─ 画面出力をキャプチャ      │    │ ├─ セッション一覧   │
 │ ├─ 状態検出（●, esc to...）  │    │ ├─ 状態表示         │
-│ └─ Unix Socket送信           │    │ └─ リアルタイム更新 │
+│ └─ Unix Socket/gRPC送信      │    │ └─ リアルタイム更新 │
 └──────────────────────────────┘    └─────────────────────┘
 ```
 
@@ -162,13 +179,13 @@ climonitor --verbose --config ~/.climonitor/config.toml
 cat ~/.climonitor/config.toml
 ```
 
-**5. TCP接続エラー**
+**5. gRPC接続エラー**
 ```bash
 # IP許可リスト確認
-grep tcp_allowed_ips ~/.climonitor/config.toml
+grep grpc_allowed_ips ~/.climonitor/config.toml
 
 # 接続ログ確認
-climonitor --verbose --tcp --bind 0.0.0.0:3001
+climonitor --verbose --grpc --bind 0.0.0.0:50051
 ```
 
 ### デバッグログの見方
@@ -197,6 +214,12 @@ cargo test
 2. `launcher/src/screen_gemini_detector.rs` （Gemini用）
 3. テストケースを `launcher/tests/integration_state_detection.rs` に追加
 
+### トランスポート実装を変更する場合
+1. **クライアント側**: `launcher/src/transports/` で実装
+2. **サーバー側**: `monitor/src/transports/` で実装
+3. **抽象化**: `shared/src/transport.rs` のトレイトは変更せず
+4. **ファクトリー**: 各crateの `transports/mod.rs` でファクトリー更新
+
 ### プロトコル変更の場合
 1. `shared/src/protocol.rs` を更新
 2. monitor と launcher の両方を更新
@@ -219,6 +242,8 @@ cargo test
 3. **実際に使ってテスト**: climonitorを起動してClaude Codeの動作を確認
 4. **Unicode安全**: 日本語やemoji処理では文字境界に注意
 5. **状態検出優先**: 新機能よりも既存の状態検出精度を重視
+6. **アーキテクチャ理解**: shared（抽象化）とlauncher/monitor（実装）の分離を意識
+7. **トランスポート分離**: 新しいトランスポートは適切なcrateに実装
 
 ---
 

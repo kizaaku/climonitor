@@ -22,9 +22,11 @@ impl ScreenGeminiStateDetector {
             ScreenBuffer::new(pty_size.rows as usize, pty_size.cols as usize, verbose);
 
         if verbose {
-            eprintln!(
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Gemini,
                 "🖥️  [GEMINI_INIT] Initialized screen buffer with {}x{} (rows x cols)",
-                pty_size.rows, pty_size.cols
+                pty_size.rows,
+                pty_size.cols
             );
         }
 
@@ -57,7 +59,10 @@ impl ScreenGeminiStateDetector {
         // 入力待ち状態（最優先）
         if line.contains("Waiting for user confirmation") {
             if self.verbose {
-                eprintln!("⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Gemini,
+                    "⏳ [GEMINI_CONFIRMATION] Screen-wide confirmation detected: {trimmed}"
+                );
             }
             return Some(SessionStatus::WaitingInput);
         }
@@ -65,7 +70,10 @@ impl ScreenGeminiStateDetector {
         // 実行中状態
         if line.contains("(esc to cancel") {
             if self.verbose {
-                eprintln!("⚡ [GEMINI_BUSY] Processing detected: {trimmed}");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Gemini,
+                    "⚡ [GEMINI_BUSY] Processing detected: {trimmed}"
+                );
             }
             return Some(SessionStatus::Busy);
         }
@@ -102,14 +110,20 @@ impl ScreenGeminiStateDetector {
 
             // 特別な状態が検出されない場合はIdle
             if self.verbose {
-                eprintln!("🔵 [GEMINI_IDLE] No busy or waiting patterns detected");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Gemini,
+                    "🔵 [GEMINI_IDLE] No busy or waiting patterns detected"
+                );
             }
             return Some(SessionStatus::Idle);
         }
 
         // UI boxがない場合も特別な状態が検出されない場合はIdle
         if self.verbose {
-            eprintln!("🔵 [GEMINI_IDLE] No UI boxes, defaulting to Idle");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Gemini,
+                "🔵 [GEMINI_IDLE] No UI boxes, defaulting to Idle"
+            );
         }
         Some(SessionStatus::Idle)
     }
@@ -153,9 +167,11 @@ impl StateDetector for ScreenGeminiStateDetector {
                 self.last_state_change = Some(now);
 
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Gemini,
                         "🎯 [GEMINI_STATE_CHANGE] {:?} → {:?}",
-                        self.current_state, gemini_state
+                        self.current_state,
+                        gemini_state
                     );
                 }
             }
@@ -177,7 +193,10 @@ impl StateDetector for ScreenGeminiStateDetector {
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim_end();
             if !trimmed.is_empty() {
-                eprintln!("  {i:2}: {trimmed}");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Gemini,
+                    "  {i:2}: {trimmed}"
+                );
             }
         }
     }

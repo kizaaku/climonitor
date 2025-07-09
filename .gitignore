@@ -31,3 +31,6 @@ ccmonitor
 
 # Test artifacts
 *.tmp
+
+# Generated protobuf files
+shared/src/climonitor.rs

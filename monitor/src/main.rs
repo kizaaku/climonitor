@@ -7,6 +7,7 @@ use climonitor_shared::{Config, ConnectionConfig};
 #[derive(Parser)]
 #[command(name = "climonitor")]
 #[command(about = "Monitor CLI tool session status in real-time")]
+#[command(version)]
 struct Cli {
     /// Verbose output
     #[arg(short, long)]
@@ -20,12 +21,12 @@ struct Cli {
     #[arg(long)]
     log_file: Option<std::path::PathBuf>,
 
-    /// Use TCP instead of Unix domain socket
+    /// Use gRPC protocol instead of raw TCP/Unix socket
     #[arg(long)]
-    tcp: bool,
+    grpc: bool,
 
-    /// TCP bind address (only with --tcp)
-    #[arg(long, default_value = "127.0.0.1:3001")]
+    /// gRPC bind address (only with --grpc)
+    #[arg(long, default_value = "127.0.0.1:50051")]
     bind: String,
 
     /// Unix socket path (default: /tmp/climonitor.sock)
@@ -57,12 +58,7 @@ async fn main() -> anyhow::Result<()> {
     config.apply_env_overrides();
 
     // CLI引数で上書き
-    if cli.tcp {
-        config.connection.r#type = "tcp".to_string();
-        config.connection.tcp_bind_addr = cli.bind;
-    }
     if let Some(socket_path) = cli.socket {
-        config.connection.r#type = "unix".to_string();
         config.connection.unix_socket_path = Some(socket_path);
     }
     if cli.verbose {
@@ -72,11 +68,22 @@ async fn main() -> anyhow::Result<()> {
         config.logging.log_file = Some(log_file);
     }
 
+    // gRPCフラグの処理
+    if cli.grpc {
+        config.connection.grpc = Some(climonitor_shared::GrpcSettings {
+            bind_addr: cli.bind,
+            allowed_ips: vec!["127.0.0.1".to_string()],
+        });
+    }
+
+    // ログシステムの初期化
+    config.logging.init_logging();
+
     // 接続設定を生成
     let connection_config = config.to_connection_config();
 
-    if cli.live {
-        // ライブモード：Monitor サーバーとして動作
+    if cli.live || cli.grpc {
+        // ライブモード：Monitor サーバーとして動作 (gRPCも含む)
         run_live_mode(
             connection_config,
             config.logging.verbose,
@@ -131,7 +138,7 @@ async fn run_live_mode(
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Monitor server error: {e}");
+                    climonitor_shared::log_error!(climonitor_shared::LogCategory::System, "Monitor server error: {e}");
                     return Err(e);
                 }
             }
@@ -145,7 +152,7 @@ async fn run_live_mode(
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Live UI error: {e}");
+                    climonitor_shared::log_error!(climonitor_shared::LogCategory::Display, "Live UI error: {e}");
                     return Err(e);
                 }
             }

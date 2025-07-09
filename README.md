@@ -14,7 +14,8 @@ climonitor は Claude Code と Gemini CLI の実行状態をリアルタイム�
 - **プロジェクト別表示**: ディレクトリごとにセッションをグループ化
 - **状態変化通知**: カスタマイズ可能な通知システム
 - **設定ファイル対応**: TOML形式の設定ファイルで詳細設定
-- **TCP/Unix通信**: ローカル・リモート両対応、IP制限によるセキュリティ
+- **多様な通信方式**: Unix Socket、gRPC対応
+- **セキュリティ対応**: IP制限によるアクセス制御
 - **ロケール対応**: 日本語/英語環境に対応した時刻表示
 - **クロスプラットフォーム**: Linux、Windows、macOS対応
 
@@ -36,17 +37,14 @@ cargo build --release
 ./target/release/climonitor-launcher gemini
 ```
 
-### TCP接続セットアップ（リモート監視）
+### gRPC接続セットアップ（リモート監視）
 
 ```bash
-# 1. 設定ファイル作成
-cp examples/config-tcp.toml ~/.climonitor/config.toml
+# 監視サーバー（リモートマシン）
+./target/release/climonitor --grpc --bind 0.0.0.0:50051 --live
 
-# 2. 監視サーバー起動（TCP）
-./target/release/climonitor --tcp --bind 0.0.0.0:3001
-
-# 3. リモートからClaude起動
-export CLIMONITOR_TCP_ADDR="192.168.1.100:3001"
+# 作業マシン（Claudeを実行）
+export CLIMONITOR_GRPC_ADDR="192.168.1.100:50051"
 ./target/release/climonitor-launcher claude
 ```
 
@@ -124,14 +122,14 @@ climonitor は TOML 形式の設定ファイルで詳細な設定が可能です
 
 ```toml
 [connection]
-# 接続タイプ: "unix" または "tcp"
-type = "tcp"
+# 接続タイプ: "unix" または "grpc"
+type = "grpc"
 
-# TCP接続時のバインドアドレス
-tcp_bind_addr = "127.0.0.1:3001"
+# gRPC接続時のバインドアドレス（デフォルト: 127.0.0.1:50051）
+grpc_bind_addr = "127.0.0.1:50051"
 
-# TCP接続時のIP許可リスト（セキュリティ機能）
-tcp_allowed_ips = ["127.0.0.1", "192.168.1.0/24", "localhost"]
+# gRPC接続時のIP許可リスト（セキュリティ機能）
+grpc_allowed_ips = ["127.0.0.1", "192.168.1.0/24", "localhost"]
 
 # Unix socket接続時のソケットパス
 # unix_socket_path = "/tmp/climonitor.sock"
@@ -151,7 +149,7 @@ log_file = "~/.climonitor/climonitor.log"
 4. **デフォルト値** （最低優先）
 
 ### 主な環境変数
-- `CLIMONITOR_TCP_ADDR`: TCP接続アドレス
+- `CLIMONITOR_GRPC_ADDR`: gRPC接続アドレス（デフォルト: 127.0.0.1:50051）
 - `CLIMONITOR_SOCKET_PATH`: Unix socketパス
 - `CLIMONITOR_VERBOSE`: 詳細ログ有効化
 - `CLIMONITOR_LOG_FILE`: ログファイルパス
@@ -162,20 +160,20 @@ log_file = "~/.climonitor/climonitor.log"
 
 **サーバーマシン（Monitor）:**
 ```bash
-# TCP接続でIP制限付きサーバー起動
-climonitor --config examples/config-remote.toml --live
+# gRPC接続でIP制限付きサーバー起動
+climonitor --grpc --bind 0.0.0.0:50051 --live
 ```
 
 **クライアントマシン（Launcher）:**
 ```bash
-# リモートサーバーに接続してClaude起動
-export CLIMONITOR_TCP_ADDR="192.168.1.100:3001"
+# gRPC接続でClaude起動
+export CLIMONITOR_GRPC_ADDR="192.168.1.100:50051"
 climonitor-launcher claude
 ```
 
 ### セキュリティ考慮事項
 
-- **IP許可リスト**: TCP接続時は必ずIP制限を設定
+- **IP許可リスト**: gRPC接続時は必ずIP制限を設定
 - **ローカル優先**: 可能な限りUnix socketを使用
 - **ファイアウォール**: 適切なポート制限を設定
 - **接続ログ**: `--verbose` でアクセス状況を監視
@@ -411,8 +409,8 @@ climonitor [OPTIONS]
 OPTIONS:
     --live                 ライブ監視モード（デフォルト）
     --verbose              詳細ログ出力
-    --tcp                  TCP接続を使用
-    --bind <ADDR>          TCP バインドアドレス（デフォルト: 127.0.0.1:3001）
+    --grpc                 gRPC接続を使用
+    --bind <ADDR>          gRPC バインドアドレス（デフォルト: 127.0.0.1:50051）
     --socket <PATH>        Unix socketパス
     --config <FILE>        設定ファイルパス
     --log-file <FILE>      ログファイルパス
@@ -428,8 +426,8 @@ ARGS:
 
 OPTIONS:
     --verbose              詳細ログ出力
-    --tcp                  TCP接続を使用
-    --connect <ADDR>       接続アドレス（TCP: host:port, Unix: パス）
+    --grpc                 gRPC接続を使用
+    --connect <ADDR>       接続アドレス（gRPC: host:port, Unix: パス）
     --config <FILE>        設定ファイルパス
     --log-file <FILE>      ログファイルパス
     --help                 ヘルプ表示
@@ -462,16 +460,23 @@ RUST_LOG=debug climonitor --live --verbose 2> monitor.log
 ## 技術仕様
 
 ### アーキテクチャ
-- **Monitor**: セッション状態を管理し、ライブUIを提供
-- **Launcher**: CLIツールをPTYでラップし、状態検出を実行
-- **Protocol**: Monitor と Launcher 間の通信プロトコル
-- **Transport**: Unix Socket / TCP 通信レイヤー（IP制限対応）
-- **Config**: TOML設定ファイル管理（優先度制御）
+- **Shared**: 共通プロトコル定義、設定管理、抽象化トレイト
+- **Monitor**: セッション状態管理、ライブUI、サーバートランスポート実装
+- **Launcher**: CLIツールPTYラッパー、状態検出、クライアントトランスポート実装
+- **Transport Layer**: 分離アーキテクチャ
+  - 抽象化: shared crateでトレイト定義
+  - 実装分離: launcher（クライアント）/ monitor（サーバー）
+  - 統一インターフェース: 設定による自動選択（Unix Socket / gRPC）
+- **Config**: TOML設定ファイル管理（優先度制御、IP制限対応）
 
 ### 主な依存関係
 - **tokio** - 非同期ランタイム
 - **portable-pty** - PTY（疑似端末）統合  
 - **vte** - 端末パーサー
+- **tonic** - gRPC実装（Rust）
+- **prost** - Protocol Buffers生成
+- **async-trait** - 非同期トレイト実装
+- **futures-util** - 非同期ストリーム処理
 - **chrono** - 日時処理（ロケール対応）
 - **serde** - JSON解析
 - **toml** - TOML設定ファイル解析

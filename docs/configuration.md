@@ -22,10 +22,10 @@ climonitor --config /path/to/custom-config.toml
 
 ```toml
 [connection]
-type = "unix"  # または "tcp"
-tcp_bind_addr = "127.0.0.1:3001"
+type = "unix"  # または "grpc"
+grpc_bind_addr = "127.0.0.1:50051"
 unix_socket_path = "/tmp/climonitor.sock"
-tcp_allowed_ips = ["127.0.0.1", "192.168.1.0/24"]
+grpc_allowed_ips = ["127.0.0.1", "192.168.1.0/24"]
 
 [logging]
 verbose = false
@@ -42,39 +42,39 @@ log_file = "~/.climonitor/climonitor.log"
 
 ### type
 - **説明**: 通信方式の指定
-- **値**: `"unix"` または `"tcp"`
+- **値**: `"unix"` または `"grpc"`
 - **デフォルト**: `"unix"`
 
 ```toml
 [connection]
-type = "tcp"  # TCP接続を使用
+type = "grpc"  # gRPC接続を使用
 ```
 
-### tcp_bind_addr
-- **説明**: TCP接続時のバインドアドレス
+### grpc_bind_addr
+- **説明**: gRPC接続時のバインドアドレス
 - **形式**: `"host:port"`
-- **デフォルト**: `"127.0.0.1:3001"`
+- **デフォルト**: `"127.0.0.1:50051"`
 - **用途**: 
   - monitor: このアドレスでサーバーを起動
   - launcher: このアドレスに接続
 
 ```toml
 [connection]
-tcp_bind_addr = "0.0.0.0:3001"  # 全インターフェースでリッスン
+grpc_bind_addr = "0.0.0.0:50051"  # 全インターフェースでリッスン
 ```
 
 ### unix_socket_path
 - **説明**: Unix socket接続時のソケットファイルパス
 - **デフォルト**: `/tmp/climonitor.sock`
-- **注意**: TCP接続時は無視される
+- **注意**: gRPC接続時は無視される
 
 ```toml
 [connection]
 unix_socket_path = "/var/run/climonitor.sock"
 ```
 
-### tcp_allowed_ips
-- **説明**: TCP接続時のIP許可リスト（セキュリティ機能）
+### grpc_allowed_ips
+- **説明**: gRPC接続時のIP許可リスト（セキュリティ機能）
 - **形式**: 文字列配列
 - **デフォルト**: `[]` （空の場合は全て許可）
 - **対応形式**:
@@ -84,7 +84,7 @@ unix_socket_path = "/var/run/climonitor.sock"
 
 ```toml
 [connection]
-tcp_allowed_ips = [
+grpc_allowed_ips = [
     "127.0.0.1",           # ローカルホスト
     "192.168.1.0/24",      # ローカルネットワーク
     "10.0.0.100",          # 特定のIP
@@ -122,7 +122,7 @@ log_file = "~/.climonitor/sessions.log"
 
 設定は以下の優先順位で適用されます（上位が優先）：
 
-1. **CLIオプション** - `--tcp`, `--bind`, `--verbose` など
+1. **CLIオプション** - `--grpc`, `--bind`, `--verbose` など
 2. **環境変数** - `CLIMONITOR_*` 系の変数
 3. **設定ファイル** - TOMLファイルの内容
 4. **デフォルト値** - プログラム内蔵のデフォルト
@@ -133,22 +133,22 @@ log_file = "~/.climonitor/sessions.log"
 # config.toml
 [connection]
 type = "unix"
-tcp_bind_addr = "127.0.0.1:3001"
+grpc_bind_addr = "127.0.0.1:50051"
 
 [logging]
 verbose = false
 ```
 
 ```bash
-# 環境変数で TCP に変更
-export CLIMONITOR_TCP_ADDR="192.168.1.100:4000"
+# 環境変数で gRPC に変更
+export CLIMONITOR_GRPC_ADDR="192.168.1.100:50051"
 
 # CLI オプションで verbose 有効化
 climonitor --verbose --live
 ```
 
 結果：
-- 接続: TCP `192.168.1.100:4000` （環境変数が優先）
+- 接続: gRPC `192.168.1.100:50051` （環境変数が優先）
 - ログ: 詳細モード（CLI引数が優先）
 
 ## 環境変数
@@ -157,7 +157,7 @@ climonitor --verbose --live
 
 | 環境変数 | 設定項目 | 例 |
 |---------|---------|---|
-| `CLIMONITOR_TCP_ADDR` | TCP接続アドレス | `192.168.1.100:3001` |
+| `CLIMONITOR_GRPC_ADDR` | gRPC接続アドレス | `192.168.1.100:50051` |
 | `CLIMONITOR_SOCKET_PATH` | Unix socketパス | `/tmp/climonitor.sock` |
 | `CLIMONITOR_VERBOSE` | 詳細ログ | `true` または `1` |
 | `CLIMONITOR_LOG_FILE` | ログファイル | `/path/to/log.txt` |
@@ -176,13 +176,13 @@ verbose = true
 log_file = "~/.climonitor/dev.log"
 ```
 
-### リモート監視用（TCP + セキュリティ）
+### リモート監視用（gRPC + セキュリティ）
 
 ```toml
 [connection]
-type = "tcp"
-tcp_bind_addr = "0.0.0.0:3001"
-tcp_allowed_ips = ["192.168.1.0/24", "10.0.0.0/8"]
+type = "grpc"
+grpc_bind_addr = "0.0.0.0:50051"
+grpc_allowed_ips = ["192.168.1.0/24", "10.0.0.0/8"]
 
 [logging]
 verbose = false
@@ -193,9 +193,9 @@ log_file = "~/.climonitor/remote.log"
 
 ```toml
 [connection]
-type = "tcp"
-tcp_bind_addr = "127.0.0.1:3001"
-tcp_allowed_ips = ["127.0.0.1"]
+type = "grpc"
+grpc_bind_addr = "127.0.0.1:50051"
+grpc_allowed_ips = ["127.0.0.1"]
 
 [logging]
 verbose = true
@@ -234,7 +234,7 @@ climonitor --verbose --config your-config.toml
 
 ## セキュリティベストプラクティス
 
-1. **IP制限の設定**: TCP使用時は必ず `tcp_allowed_ips` を設定
+1. **IP制限の設定**: gRPC使用時は必ず `grpc_allowed_ips` を設定
 2. **最小権限の原則**: 必要最小限のIPアドレス範囲のみ許可
 3. **ローカル優先**: 可能な限りUnix socketを使用
 4. **ログ監視**: `--verbose` で接続状況を定期的に確認
@@ -244,18 +244,18 @@ climonitor --verbose --config your-config.toml
 
 ```toml
 [connection]
-type = "tcp"
-tcp_bind_addr = "0.0.0.0:3001"
-tcp_allowed_ips = []  # 危険: 全世界からアクセス可能
+type = "grpc"
+grpc_bind_addr = "0.0.0.0:50051"
+grpc_allowed_ips = []  # 危険: 全世界からアクセス可能
 ```
 
 ### 良い例
 
 ```toml
 [connection]
-type = "tcp"
-tcp_bind_addr = "0.0.0.0:3001"
-tcp_allowed_ips = ["192.168.1.0/24"]  # 安全: ローカルネットワークのみ
+type = "grpc"
+grpc_bind_addr = "0.0.0.0:50051"
+grpc_allowed_ips = ["192.168.1.0/24"]  # 安全: ローカルネットワークのみ
 ```
 
 ## 将来拡張予定

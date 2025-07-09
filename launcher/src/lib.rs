@@ -1,9 +1,11 @@
 pub mod claude_tool;
 pub mod cli_tool;
 pub mod gemini_tool;
+pub mod grpc_client;
 pub mod screen_buffer;
 pub mod screen_claude_detector;
 pub mod screen_gemini_detector;
 pub mod state_detector;
 pub mod tool_wrapper;
 pub mod transport_client;
+pub mod transports;

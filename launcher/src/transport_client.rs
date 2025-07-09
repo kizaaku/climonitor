@@ -1,13 +1,12 @@
 use anyhow::Result;
 use chrono::Utc;
 use portable_pty::MasterPty;
-use serde_json;
 use std::path::PathBuf;
 use tokio::task::JoinHandle;
 
 use crate::tool_wrapper::ToolWrapper;
 use climonitor_shared::{
-    connect_client, generate_connection_id, Connection, ConnectionConfig, LauncherToMonitor,
+    generate_connection_id, transport::MessageSender, ConnectionConfig, LauncherToMonitor,
     SessionStatus,
 };
 
@@ -20,6 +19,7 @@ pub struct PtyConfig {
     pub log_file: Option<PathBuf>,
     pub tool_type: crate::cli_tool::CliToolType,
     pub connection_config: ConnectionConfig,
+    pub grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
 }
 
 /// PTY監視処理用の設定構造体
@@ -29,6 +29,7 @@ struct PtyMonitoringConfig {
     verbose: bool,
     tool_type: crate::cli_tool::CliToolType,
     connection_config: ConnectionConfig,
+    grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
 }
 
 /// ダミーターミナルガード（main関数で実際のガードが作成済みの場合）
@@ -40,7 +41,8 @@ pub struct DummyTerminalGuard {
 /// Transport対応 Launcher クライアント
 pub struct TransportLauncherClient {
     launcher_id: String,
-    connection: Option<Connection>,
+    message_sender: Option<Box<dyn MessageSender>>,
+    grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
     connection_config: ConnectionConfig,
     tool_wrapper: ToolWrapper,
     project_name: Option<String>,
@@ -63,7 +65,8 @@ impl TransportLauncherClient {
 
         let mut client = Self {
             launcher_id,
-            connection: None,
+            message_sender: None,
+            grpc_client: None,
             connection_config,
             tool_wrapper,
             project_name,
@@ -78,25 +81,58 @@ impl TransportLauncherClient {
         Ok(client)
     }
 
+    /// gRPC client付きで新しいTransportLauncherClientを作成
+    pub async fn new_with_grpc(
+        tool_wrapper: ToolWrapper,
+        grpc_client: crate::grpc_client::GrpcLauncherClient,
+        verbose: bool,
+        log_file: Option<PathBuf>,
+    ) -> Result<Self> {
+        let launcher_id = grpc_client.get_launcher_id().to_string();
+        let session_id = grpc_client.get_session_id().to_string();
+        let project_name = tool_wrapper.guess_project_name();
+
+        let client = Self {
+            launcher_id,
+            message_sender: None, // gRPCクライアントは別途管理
+            grpc_client: Some(grpc_client),
+            connection_config: climonitor_shared::ConnectionConfig::default_grpc(), // ダミー
+            tool_wrapper,
+            project_name,
+            session_id,
+            verbose,
+            log_file,
+        };
+
+        // Note: gRPCクライアントは既に接続済みのため、接続試行は不要
+
+        Ok(client)
+    }
+
     /// Monitor サーバーへの接続を試行
     async fn try_connect_to_monitor(&mut self) -> Result<()> {
         if self.verbose {
-            eprintln!(
+            climonitor_shared::log_info!(
+                climonitor_shared::LogCategory::Transport,
                 "🔄 Attempting to connect to monitor server: {:?}",
                 self.connection_config
             );
         }
 
-        match connect_client(&self.connection_config).await {
-            Ok(connection) => {
-                self.connection = Some(connection);
+        match crate::transports::create_message_sender(&self.connection_config).await {
+            Ok(sender) => {
+                self.message_sender = Some(sender);
                 if self.verbose {
-                    eprintln!("🔗 Connected to monitor server");
+                    climonitor_shared::log_info!(
+                        climonitor_shared::LogCategory::Transport,
+                        "🔗 Connected to monitor server"
+                    );
                 }
             }
             Err(e) => {
                 if self.verbose {
-                    eprintln!(
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::Transport,
                         "⚠️  Failed to connect to monitor server: {e}. Running without monitoring."
                     );
                 }
@@ -108,61 +144,156 @@ impl TransportLauncherClient {
 
     /// Monitor サーバーに接続されているかチェック
     pub fn is_connected(&self) -> bool {
-        self.connection.is_some()
+        self.message_sender.is_some() || self.grpc_client.is_some()
     }
 
     /// 接続メッセージを送信
     async fn send_connect_message(&mut self) -> Result<()> {
-        if let Some(ref mut connection) = self.connection {
-            let connect_msg = LauncherToMonitor::Connect {
-                launcher_id: self.launcher_id.clone(),
-                project: self.project_name.clone(),
-                tool_type: self.tool_wrapper.get_tool_type(),
-                claude_args: self.tool_wrapper.get_args().to_vec(),
-                working_dir: self
-                    .tool_wrapper
-                    .get_working_dir()
-                    .cloned()
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
-                timestamp: Utc::now(),
-            };
+        let _connect_msg = LauncherToMonitor::Connect {
+            launcher_id: self.launcher_id.clone(),
+            project: self.project_name.clone(),
+            tool_type: self.tool_wrapper.get_tool_type(),
+            claude_args: self.tool_wrapper.get_args().to_vec(),
+            working_dir: self
+                .tool_wrapper
+                .get_working_dir()
+                .cloned()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+            timestamp: Utc::now(),
+        };
 
+        if let Some(ref grpc_client) = self.grpc_client {
             if self.verbose {
-                eprintln!(
-                    "📤 Sending connect message: launcher_id={}, project={:?}",
-                    self.launcher_id, self.project_name
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "📤 Sending gRPC connect message: launcher_id={}, project={:?}",
+                    self.launcher_id,
+                    self.project_name
                 );
             }
-
-            let msg_bytes = serde_json::to_vec(&connect_msg)?;
-            connection.write_all(&msg_bytes).await?;
-            connection.write_all(b"\n").await?;
-            connection.flush().await?;
-
+            grpc_client
+                .send_connect(
+                    self.project_name.clone(),
+                    self.tool_wrapper.get_tool_type(),
+                    self.tool_wrapper.get_args().to_vec(),
+                    self.tool_wrapper
+                        .get_working_dir()
+                        .cloned()
+                        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                )
+                .await?;
             if self.verbose {
-                eprintln!("✅ Connect message sent successfully");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "✅ gRPC connect message sent successfully"
+                );
+            }
+        } else if let Some(ref sender) = self.message_sender {
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Transport,
+                    "📤 Sending connect message: launcher_id={}, project={:?}",
+                    self.launcher_id,
+                    self.project_name
+                );
+            }
+            sender
+                .send_connect(
+                    self.project_name.clone(),
+                    self.tool_wrapper.get_tool_type(),
+                    self.tool_wrapper.get_args().to_vec(),
+                    self.tool_wrapper
+                        .get_working_dir()
+                        .cloned()
+                        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                )
+                .await?;
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Transport,
+                    "✅ Connect message sent successfully"
+                );
             }
         } else if self.verbose {
-            eprintln!("⚠️  No connection available for sending connect message");
+            climonitor_shared::log_warn!(
+                climonitor_shared::LogCategory::Transport,
+                "⚠️  No connection available for sending connect message"
+            );
         }
         Ok(())
     }
 
     /// 切断メッセージを送信
     async fn send_disconnect_message(&mut self) -> Result<()> {
-        if let Some(ref mut connection) = self.connection {
-            let disconnect_msg = LauncherToMonitor::Disconnect {
-                launcher_id: self.launcher_id.clone(),
-                timestamp: Utc::now(),
-            };
-
-            let msg_bytes = serde_json::to_vec(&disconnect_msg)?;
-            connection.write_all(&msg_bytes).await?;
-            connection.write_all(b"\n").await?;
-
+        if let Some(ref grpc_client) = self.grpc_client {
+            grpc_client.send_disconnect().await?;
             if self.verbose {
-                eprintln!("📤 Sent disconnect message to monitor");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "📤 Sent gRPC disconnect message to monitor"
+                );
             }
+        } else if let Some(ref sender) = self.message_sender {
+            sender.send_disconnect(self.session_id.clone()).await?;
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Transport,
+                    "📤 Sent disconnect message to monitor"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// 状態更新メッセージを送信
+    pub async fn send_state_update(&self, status: SessionStatus, message: String) -> Result<()> {
+        if let Some(ref grpc_client) = self.grpc_client {
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "📤 Sending gRPC state update: {status:?}"
+                );
+            }
+            grpc_client.send_state_update(status, Some(message)).await?;
+        } else if let Some(ref sender) = self.message_sender {
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Transport,
+                    "📤 Sending state update: {status:?}"
+                );
+            }
+            sender
+                .send_status_update(
+                    self.session_id.clone(),
+                    status,
+                    Utc::now(),
+                    self.project_name.clone(),
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// コンテキスト更新メッセージを送信
+    pub async fn send_context_update(&self, ui_above_text: String) -> Result<()> {
+        if let Some(ref grpc_client) = self.grpc_client {
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "📤 Sending gRPC context update"
+                );
+            }
+            grpc_client.send_context_update(Some(ui_above_text)).await?;
+        } else if let Some(ref sender) = self.message_sender {
+            if self.verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Transport,
+                    "📤 Sending context update"
+                );
+            }
+            sender
+                .send_context_update(self.session_id.clone(), ui_above_text, Utc::now())
+                .await?;
         }
         Ok(())
     }
@@ -170,7 +301,8 @@ impl TransportLauncherClient {
     /// Claude プロセス起動・監視
     pub async fn run_claude(&mut self) -> Result<()> {
         if self.verbose {
-            eprintln!(
+            climonitor_shared::log_info!(
+                climonitor_shared::LogCategory::System,
                 "🚀 Starting CLI tool: {}",
                 self.tool_wrapper.to_command_string()
             );
@@ -179,7 +311,10 @@ impl TransportLauncherClient {
         // Monitor に接続できていない場合は単純にClaude実行
         if !self.is_connected() {
             if self.verbose {
-                eprintln!("🔄 Running CLI tool without monitoring (monitor not connected)");
+                climonitor_shared::log_info!(
+                    climonitor_shared::LogCategory::System,
+                    "🔄 Running CLI tool without monitoring (monitor not connected)"
+                );
             }
             return self.tool_wrapper.run_directly().await;
         }
@@ -187,10 +322,16 @@ impl TransportLauncherClient {
         // 接続メッセージを送信
         if let Err(e) = self.send_connect_message().await {
             if self.verbose {
-                eprintln!("⚠️  Failed to send connect message: {e}");
+                climonitor_shared::log_warn!(
+                    climonitor_shared::LogCategory::Transport,
+                    "⚠️  Failed to send connect message: {e}"
+                );
             }
         } else if self.verbose {
-            eprintln!("✅ Connect message sent successfully");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::Transport,
+                "✅ Connect message sent successfully"
+            );
         }
 
         // ターミナルガードはmain関数で作成済み（ここでは作らない）
@@ -208,7 +349,10 @@ impl TransportLauncherClient {
         };
 
         if self.verbose {
-            eprintln!("👀 Monitoring started for CLI tool process");
+            climonitor_shared::log_info!(
+                climonitor_shared::LogCategory::System,
+                "👀 Monitoring started for CLI tool process"
+            );
         }
 
         // CLI ツール プロセスの終了を待つタスクを一度だけ起動
@@ -226,24 +370,36 @@ impl TransportLauncherClient {
         match exit_status {
             Ok(status) => {
                 if self.verbose {
-                    eprintln!("🏁 CLI tool process exited with status: {status:?}");
+                    climonitor_shared::log_info!(
+                        climonitor_shared::LogCategory::System,
+                        "🏁 CLI tool process exited with status: {status:?}"
+                    );
                 }
             }
             Err(e) => {
                 if self.verbose {
-                    eprintln!("❌ CLI tool execution failed: {e}");
+                    climonitor_shared::log_error!(
+                        climonitor_shared::LogCategory::System,
+                        "❌ CLI tool execution failed: {e}"
+                    );
                 }
                 // エラー時でも切断メッセージを送信
                 if let Err(disconnect_err) = self.send_disconnect_message().await {
                     if self.verbose {
-                        eprintln!("⚠️  Failed to send disconnect message: {disconnect_err}");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::Transport,
+                            "⚠️  Failed to send disconnect message: {disconnect_err}"
+                        );
                     }
                 }
                 // 接続を明示的に閉じる
-                if let Some(connection) = self.connection.take() {
-                    drop(connection);
+                if let Some(sender) = self.message_sender.take() {
+                    drop(sender);
                     if self.verbose {
-                        eprintln!("🔌 Connection closed (after error)");
+                        climonitor_shared::log_debug!(
+                            climonitor_shared::LogCategory::Transport,
+                            "🔌 Connection closed (after error)"
+                        );
                     }
                 }
                 return Err(e);
@@ -254,10 +410,13 @@ impl TransportLauncherClient {
         self.send_disconnect_message().await?;
 
         // 接続を明示的に閉じる
-        if let Some(connection) = self.connection.take() {
-            drop(connection);
+        if let Some(sender) = self.message_sender.take() {
+            drop(sender);
             if self.verbose {
-                eprintln!("🔌 Connection closed");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Transport,
+                    "🔌 Connection closed"
+                );
             }
         }
 
@@ -277,6 +436,7 @@ impl TransportLauncherClient {
         let log_file = self.log_file.clone();
         let tool_type = self.tool_wrapper.get_tool_type();
         let connection_config = self.connection_config.clone();
+        let grpc_client = self.grpc_client.clone();
 
         // PTYのリサイズ機能を有効にするため、Arc<Mutex<>>でラップ
         let pty_master_shared = std::sync::Arc::new(std::sync::Mutex::new(pty_master));
@@ -289,6 +449,7 @@ impl TransportLauncherClient {
                 log_file,
                 tool_type,
                 connection_config,
+                grpc_client,
             };
             Self::handle_pty_bidirectional_io(pty_master_shared, config, _terminal_guard).await;
         });
@@ -314,7 +475,11 @@ impl TransportLauncherClient {
                 Err(e) => {
                     if config.verbose {
                         let log_display = log_path.display();
-                        eprintln!("⚠️  Failed to open log file {log_display}: {e}");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::System,
+                            "⚠️  Failed to open log file {}: {e}",
+                            log_display
+                        );
                     }
                     None
                 }
@@ -330,7 +495,10 @@ impl TransportLauncherClient {
                     Ok(writer) => writer,
                     Err(e) => {
                         if config.verbose {
-                            eprintln!("⚠️  Failed to get PTY writer: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::System,
+                                "⚠️  Failed to get PTY writer: {e}"
+                            );
                         }
                         return;
                     }
@@ -340,7 +508,10 @@ impl TransportLauncherClient {
                     Ok(reader) => reader,
                     Err(e) => {
                         if config.verbose {
-                            eprintln!("⚠️  Failed to get PTY reader: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::System,
+                                "⚠️  Failed to get PTY reader: {e}"
+                            );
                         }
                         return;
                     }
@@ -349,7 +520,10 @@ impl TransportLauncherClient {
                 (writer, reader)
             } else {
                 if config.verbose {
-                    eprintln!("⚠️  Failed to lock PTY master");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::System,
+                        "⚠️  Failed to lock PTY master"
+                    );
                 }
                 return;
             }
@@ -366,6 +540,7 @@ impl TransportLauncherClient {
             verbose: config_clone.verbose,
             tool_type: config_clone.tool_type,
             connection_config: config_clone.connection_config,
+            grpc_client: config_clone.grpc_client.clone(),
         };
         let mut pty_to_stdout = tokio::spawn(async move {
             Self::handle_pty_to_stdout_with_monitoring(
@@ -385,13 +560,13 @@ impl TransportLauncherClient {
         tokio::select! {
             _ = &mut pty_to_stdout => {
                 if config.verbose {
-                    eprintln!("📡 PTY to stdout task ended");
+                    climonitor_shared::log_debug!(climonitor_shared::LogCategory::System, "📡 PTY to stdout task ended");
                 }
                 stdin_to_pty.abort();
             }
             _ = &mut stdin_to_pty => {
                 if config.verbose {
-                    eprintln!("📡 Stdin to PTY task ended");
+                    climonitor_shared::log_debug!(climonitor_shared::LogCategory::System, "📡 Stdin to PTY task ended");
                 }
                 pty_to_stdout.abort();
             }
@@ -420,24 +595,24 @@ impl TransportLauncherClient {
                     }
                     _ = sigint.recv() => {
                         if self.verbose {
-                            eprintln!("🛑 Received SIGINT, letting CLI tool handle it...");
+                            climonitor_shared::log_info!(climonitor_shared::LogCategory::System, "🛑 Received SIGINT, letting CLI tool handle it...");
                         }
                     }
                     _ = sigterm.recv() => {
                         if self.verbose {
-                            eprintln!("🛑 Received SIGTERM, shutting down gracefully...");
+                            climonitor_shared::log_info!(climonitor_shared::LogCategory::System, "🛑 Received SIGTERM, shutting down gracefully...");
                         }
                         return Err(anyhow::anyhow!("Terminated by signal"));
                     }
                     _ = sigwinch.recv() => {
                         if self.verbose {
-                            eprintln!("🔄 Terminal resized - updating PTY size...");
+                            climonitor_shared::log_debug!(climonitor_shared::LogCategory::System, "🔄 Terminal resized - updating PTY size...");
                         }
                         let new_size = crate::cli_tool::get_pty_size();
                         if self.verbose {
                             let cols = new_size.cols;
                             let rows = new_size.rows;
-                            eprintln!("📏 New terminal size: {cols}x{rows}");
+                            climonitor_shared::log_debug!(climonitor_shared::LogCategory::System, "📏 New terminal size: {cols}x{rows}");
                         }
                     }
                 }
@@ -453,7 +628,7 @@ impl TransportLauncherClient {
                     }
                     _ = tokio::signal::ctrl_c() => {
                         if self.verbose {
-                            eprintln!("🛑 Received Ctrl+C, letting CLI tool handle it...");
+                            climonitor_shared::log_info!(climonitor_shared::LogCategory::System, "🛑 Received Ctrl+C, letting CLI tool handle it...");
                         }
                     }
                 }
@@ -494,6 +669,7 @@ impl TransportLauncherClient {
             let launcher_id_clone = config.launcher_id.clone();
             let session_id_clone = config.session_id.clone();
             let config_clone = config.connection_config.clone();
+            let grpc_client_clone = config.grpc_client.clone();
             let verbose = config.verbose;
 
             tokio::spawn(async move {
@@ -503,6 +679,7 @@ impl TransportLauncherClient {
                     launcher_id_clone,
                     session_id_clone,
                     config_clone,
+                    grpc_client_clone,
                     verbose,
                 )
                 .await;
@@ -513,7 +690,10 @@ impl TransportLauncherClient {
             match pty_reader.read(&mut buffer) {
                 Ok(0) => {
                     if config.verbose {
-                        eprintln!("📡 PTY reader EOF");
+                        climonitor_shared::log_debug!(
+                            climonitor_shared::LogCategory::System,
+                            "📡 PTY reader EOF"
+                        );
                     }
                     state_checker_task.abort();
                     break;
@@ -525,7 +705,10 @@ impl TransportLauncherClient {
                     // 標準出力に書き込み
                     if let Err(e) = stdout.write_all(data).await {
                         if config.verbose {
-                            eprintln!("⚠️  Failed to write to stdout: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::System,
+                                "⚠️  Failed to write to stdout: {e}"
+                            );
                         }
                         break;
                     }
@@ -534,7 +717,10 @@ impl TransportLauncherClient {
                     if let Some(ref mut log_file) = log_writer {
                         if let Err(e) = log_file.write_all(data).await {
                             if config.verbose {
-                                eprintln!("⚠️  Failed to write to log file: {e}");
+                                climonitor_shared::log_warn!(
+                                    climonitor_shared::LogCategory::System,
+                                    "⚠️  Failed to write to log file: {e}"
+                                );
                             }
                         }
                     }
@@ -545,7 +731,8 @@ impl TransportLauncherClient {
                         || current_terminal_size.cols != last_terminal_size.cols
                     {
                         if config.verbose {
-                            eprintln!(
+                            climonitor_shared::log_debug!(
+                                climonitor_shared::LogCategory::System,
                                 "🔄 Terminal size changed: {}x{} -> {}x{}",
                                 last_terminal_size.cols,
                                 last_terminal_size.rows,
@@ -558,10 +745,16 @@ impl TransportLauncherClient {
                         if let Ok(master) = pty_master.lock() {
                             if let Err(e) = master.resize(current_terminal_size) {
                                 if config.verbose {
-                                    eprintln!("⚠️  Failed to resize PTY: {e}");
+                                    climonitor_shared::log_warn!(
+                                        climonitor_shared::LogCategory::System,
+                                        "⚠️  Failed to resize PTY: {e}"
+                                    );
                                 }
                             } else if config.verbose {
-                                eprintln!("✅ PTY resized successfully");
+                                climonitor_shared::log_debug!(
+                                    climonitor_shared::LogCategory::System,
+                                    "✅ PTY resized successfully"
+                                );
                             }
                         }
 
@@ -588,7 +781,10 @@ impl TransportLauncherClient {
                 }
                 Err(e) => {
                     if config.verbose {
-                        eprintln!("⚠️  PTY read error: {e}");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::System,
+                            "⚠️  PTY read error: {e}"
+                        );
                     }
                     state_checker_task.abort();
                     break;
@@ -606,7 +802,10 @@ impl TransportLauncherClient {
         use tokio::io::AsyncReadExt;
 
         if verbose {
-            eprintln!("📡 Starting stdin to PTY forwarding (raw mode already set by main)");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::System,
+                "📡 Starting stdin to PTY forwarding (raw mode already set by main)"
+            );
         }
 
         let mut stdin = tokio::io::stdin();
@@ -616,7 +815,10 @@ impl TransportLauncherClient {
             match stdin.read(&mut buffer).await {
                 Ok(0) => {
                     if verbose {
-                        eprintln!("📡 Stdin EOF");
+                        climonitor_shared::log_debug!(
+                            climonitor_shared::LogCategory::System,
+                            "📡 Stdin EOF"
+                        );
                     }
                     break;
                 }
@@ -625,21 +827,30 @@ impl TransportLauncherClient {
 
                     if let Err(e) = pty_writer.write_all(data) {
                         if verbose {
-                            eprintln!("⚠️  Failed to write to PTY: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::System,
+                                "⚠️  Failed to write to PTY: {e}"
+                            );
                         }
                         break;
                     }
 
                     if let Err(e) = pty_writer.flush() {
                         if verbose {
-                            eprintln!("⚠️  Failed to flush PTY: {e}");
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::System,
+                                "⚠️  Failed to flush PTY: {e}"
+                            );
                         }
                         break;
                     }
                 }
                 Err(e) => {
                     if verbose {
-                        eprintln!("⚠️  Stdin read error: {e}");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::System,
+                            "⚠️  Stdin read error: {e}"
+                        );
                     }
                     break;
                 }
@@ -647,7 +858,10 @@ impl TransportLauncherClient {
         }
 
         if verbose {
-            eprintln!("📡 Stdin to PTY forwarding ended");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::System,
+                "📡 Stdin to PTY forwarding ended"
+            );
         }
     }
 
@@ -660,6 +874,7 @@ impl TransportLauncherClient {
         launcher_id: String,
         session_id: String,
         connection_config: ConnectionConfig,
+        grpc_client: Option<crate::grpc_client::GrpcLauncherClient>,
         verbose: bool,
     ) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
@@ -687,7 +902,7 @@ impl TransportLauncherClient {
                             && current_status == SessionStatus::Idle
                         {
                             if verbose {
-                                eprintln!("🔒 [STATE_TRANSITION] Blocked Connected→Idle transition, keeping Connected");
+                                climonitor_shared::log_debug!(climonitor_shared::LogCategory::Session, "🔒 [STATE_TRANSITION] Blocked Connected→Idle transition, keeping Connected");
                             }
                             (false, false) // 状態変化を通知しない（Connected状態を維持）
                         } else {
@@ -707,110 +922,125 @@ impl TransportLauncherClient {
             // 状態変化時はStateUpdate、コンテキスト変化のみの場合はContextUpdate
             if should_notify_status {
                 if verbose {
-                    eprintln!("🔄 Periodic status update: {current_status:?}");
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Session,
+                        "🔄 Periodic status update: {current_status:?}"
+                    );
                 }
 
-                Self::send_status_update_simple(
-                    &launcher_id,
-                    &session_id,
+                if let Err(e) = Self::send_periodic_status_update(
                     current_status,
                     current_ui_context.clone(),
                     &connection_config,
+                    grpc_client.as_ref(),
+                    &launcher_id,
+                    &session_id,
                     verbose,
                 )
-                .await;
+                .await
+                {
+                    if verbose {
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::Transport,
+                            "⚠️  Failed to send periodic status update: {e}"
+                        );
+                    }
+                }
 
                 last_ui_context = current_ui_context;
             } else if context_changed {
                 if verbose {
-                    eprintln!("🔄 Context update: {current_ui_context:?}");
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::Session,
+                        "🔄 Context update: {current_ui_context:?}"
+                    );
                 }
 
-                Self::send_context_update_simple(
-                    &launcher_id,
-                    &session_id,
+                if let Err(e) = Self::send_periodic_context_update(
                     current_ui_context.clone(),
                     &connection_config,
+                    grpc_client.as_ref(),
+                    &launcher_id,
+                    &session_id,
                     verbose,
                 )
-                .await;
+                .await
+                {
+                    if verbose {
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::Transport,
+                            "⚠️  Failed to send periodic context update: {e}"
+                        );
+                    }
+                }
 
                 last_ui_context = current_ui_context;
             }
         }
     }
 
-    /// 簡易状態更新送信
-    async fn send_status_update_simple(
-        launcher_id: &str,
-        session_id: &str,
+    /// 定期的な状態更新送信
+    async fn send_periodic_status_update(
         status: SessionStatus,
         ui_above_text: Option<String>,
         connection_config: &ConnectionConfig,
+        grpc_client: Option<&crate::grpc_client::GrpcLauncherClient>,
+        _launcher_id: &str,
+        session_id: &str,
         verbose: bool,
-    ) {
-        match connect_client(connection_config).await {
-            Ok(mut connection) => {
-                let update_msg = LauncherToMonitor::StateUpdate {
-                    launcher_id: launcher_id.to_string(),
-                    session_id: session_id.to_string(),
-                    status: status.clone(),
-                    ui_above_text,
-                    timestamp: chrono::Utc::now(),
-                };
-
-                if let Ok(msg_bytes) = serde_json::to_vec(&update_msg) {
-                    let _ = connection.write_all(&msg_bytes).await;
-                    let _ = connection.write_all(b"\n").await;
-                    let _ = connection.flush().await;
-
-                    if verbose {
-                        eprintln!("📤 Sent periodic status update: {status:?}");
-                    }
-                }
+    ) -> Result<()> {
+        if let Some(grpc_client) = grpc_client {
+            if verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "📤 Sent gRPC periodic status update: {status:?}"
+                );
             }
-            Err(_) => {
-                if verbose {
-                    eprintln!("⚠️  Failed to send periodic status update (monitor not available)");
-                }
+            grpc_client.send_state_update(status, ui_above_text).await?;
+        } else {
+            // Create a temporary sender for this operation
+            if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
+                sender
+                    .send_status_update(session_id.to_string(), status, Utc::now(), None)
+                    .await?;
             }
         }
+        Ok(())
     }
 
-    /// 簡易コンテキスト更新送信
-    async fn send_context_update_simple(
-        launcher_id: &str,
-        session_id: &str,
+    /// 定期的なコンテキスト更新送信
+    async fn send_periodic_context_update(
         ui_above_text: Option<String>,
         connection_config: &ConnectionConfig,
+        grpc_client: Option<&crate::grpc_client::GrpcLauncherClient>,
+        _launcher_id: &str,
+        session_id: &str,
         verbose: bool,
-    ) {
-        match connect_client(connection_config).await {
-            Ok(mut connection) => {
-                let context_msg = LauncherToMonitor::ContextUpdate {
-                    launcher_id: launcher_id.to_string(),
-                    session_id: session_id.to_string(),
-                    ui_above_text,
-                    timestamp: chrono::Utc::now(),
-                };
-
-                if let Ok(msg_bytes) = serde_json::to_vec(&context_msg) {
-                    let _ = connection.write_all(&msg_bytes).await;
-                    let _ = connection.write_all(b"\n").await;
-                    let _ = connection.flush().await;
-
-                    if verbose {
-                        eprintln!("📤 Sent context update");
-                    }
-                }
+    ) -> Result<()> {
+        if let Some(grpc_client) = grpc_client {
+            grpc_client.send_context_update(ui_above_text).await?;
+            if verbose {
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::Grpc,
+                    "📤 Sent gRPC context update"
+                );
             }
-            Err(_) => {
-                if verbose {
-                    eprintln!("⚠️  Failed to send context update (monitor not available)");
-                }
+        } else {
+            // Create a temporary sender for this operation
+            if let Ok(sender) = crate::transports::create_message_sender(connection_config).await {
+                sender
+                    .send_context_update(
+                        session_id.to_string(),
+                        ui_above_text.unwrap_or_default(),
+                        Utc::now(),
+                    )
+                    .await?;
             }
         }
+        Ok(())
     }
+
+    // This method is no longer needed as we use the trait-based MessageSender API
 }
 
 // Drop実装を削除し、明示的な切断処理に依存
@@ -836,13 +1066,19 @@ impl Drop for TerminalGuard {
             // ターミナルかどうかチェック
             if !nix::unistd::isatty(self.fd).unwrap_or(false) {
                 if self.verbose {
-                    eprintln!("🔓 Terminal guard dropped (non-TTY)");
+                    climonitor_shared::log_debug!(
+                        climonitor_shared::LogCategory::System,
+                        "🔓 Terminal guard dropped (non-TTY)"
+                    );
                 }
                 return;
             }
 
             if self.verbose {
-                eprintln!("🔓 Restoring terminal settings");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::System,
+                    "🔓 Restoring terminal settings"
+                );
             }
 
             // SAFETY: fd は有効なファイルディスクリプタです
@@ -854,7 +1090,10 @@ impl Drop for TerminalGuard {
                 &self.original,
             ) {
                 if self.verbose {
-                    eprintln!("⚠️  Failed to restore terminal: {e}");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::System,
+                        "⚠️  Failed to restore terminal: {e}"
+                    );
                 }
             }
         }
@@ -873,26 +1112,34 @@ impl Drop for TerminalGuard {
                         // 元のコンソールモードを正確に復元
                         if SetConsoleMode(stdin_handle, original_mode) != 0 {
                             if self.verbose {
-                                eprintln!(
+                                climonitor_shared::log_debug!(
+                                    climonitor_shared::LogCategory::System,
                                     "🔓 Windows console mode restored to original (0x{:x})",
                                     original_mode
                                 );
                             }
                         } else if self.verbose {
-                            eprintln!(
+                            climonitor_shared::log_warn!(
+                                climonitor_shared::LogCategory::System,
                                 "⚠️  Failed to restore original Windows console mode (0x{:x})",
                                 original_mode
                             );
                         }
                     } else if self.verbose {
-                        eprintln!("⚠️  No original console mode to restore");
+                        climonitor_shared::log_warn!(
+                            climonitor_shared::LogCategory::System,
+                            "⚠️  No original console mode to restore"
+                        );
                     }
                 }
             }
         }
 
         if self.verbose {
-            eprintln!("🔓 Terminal guard dropped");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::System,
+                "🔓 Terminal guard dropped"
+            );
         }
     }
 }
@@ -909,7 +1156,10 @@ pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGua
         // stdinがターミナルかどうかチェック
         if !nix::unistd::isatty(stdin_fd).unwrap_or(false) {
             if verbose {
-                eprintln!("🔒 Terminal guard created (non-TTY mode)");
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::System,
+                    "🔒 Terminal guard created (non-TTY mode)"
+                );
             }
             // ターミナルでない場合は何もしない（ダミーのTermiosを作成）
             let dummy_termios = unsafe { std::mem::zeroed() };
@@ -941,7 +1191,10 @@ pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGua
         .map_err(|e| anyhow::anyhow!("Failed to set raw mode: {}", e))?;
 
         if verbose {
-            eprintln!("🔒 Terminal guard created with raw mode");
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::System,
+                "🔒 Terminal guard created with raw mode"
+            );
         }
 
         Ok(TerminalGuard {
@@ -992,7 +1245,10 @@ pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGua
 
             if SetConsoleMode(stdin_handle, new_mode) == 0 {
                 if verbose {
-                    eprintln!("⚠️  Failed to set Windows console raw mode");
+                    climonitor_shared::log_warn!(
+                        climonitor_shared::LogCategory::System,
+                        "⚠️  Failed to set Windows console raw mode"
+                    );
                 }
                 return Ok(TerminalGuard {
                     verbose,
@@ -1001,7 +1257,8 @@ pub fn create_terminal_guard_global(verbose: bool) -> anyhow::Result<TerminalGua
             }
 
             if verbose {
-                eprintln!(
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::System,
                     "🔒 Windows console raw mode enabled (original: 0x{:x})",
                     original_mode
                 );
@@ -1071,7 +1328,8 @@ pub fn force_restore_terminal() {
                 // 標準的なコンソールモードに強制復元
                 let default_mode = ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT;
                 let _ = SetConsoleMode(stdin_handle, default_mode);
-                eprintln!(
+                climonitor_shared::log_debug!(
+                    climonitor_shared::LogCategory::System,
                     "🔓 Force restored Windows console to default mode (0x{:x})",
                     default_mode
                 );
@@ -1081,4 +1339,20 @@ pub fn force_restore_terminal() {
 }
 
 // 新しいクライアントをLauncherClientとしてエクスポート
+impl Drop for TransportLauncherClient {
+    fn drop(&mut self) {
+        // Drop時に同期的に切断メッセージを送信することは困難なため、
+        // 主にログ出力とクリーンアップに集中
+        if self.verbose && (self.message_sender.is_some() || self.grpc_client.is_some()) {
+            climonitor_shared::log_debug!(
+                climonitor_shared::LogCategory::System,
+                "📤 TransportLauncherClient dropping - connection cleanup"
+            );
+        }
+
+        // 注意: 実際の切断メッセージ送信は run_claude() の終了時に行われる
+        // または main関数のシグナルハンドリングで明示的に呼び出される
+    }
+}
+
 pub type LauncherClient = TransportLauncherClient;
